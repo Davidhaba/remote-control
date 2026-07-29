@@ -10,8 +10,8 @@ import io
 import sys
 import ctypes
 import uuid
+import requests
 from ctypes import wintypes
-import socketio
 try:
     import pyautogui
 except Exception:
@@ -177,7 +177,6 @@ if not args.server_id:
     host_name = socket.gethostname().replace(' ', '-').lower()
     args.server_id = f"{host_name}-{uuid.uuid4().hex[:8]}"
 
-relay_socket = socketio.Client()
 relay_connected = False
 relay_heartbeat_thread_started = False
 relay_retry_thread_started = False
@@ -193,33 +192,35 @@ def normalize_relay_url(value):
 
 
 def connect_to_relay():
-    global relay_socket, relay_connected, relay_heartbeat_thread_started, relay_retry_thread_started
+    global relay_connected, relay_heartbeat_thread_started, relay_retry_thread_started
     if relay_connected:
         return
 
     relay_url = normalize_relay_url(args.relay_url)
-    last_error = None
-    for transports in (['websocket', 'polling'], ['polling'], ['websocket']):
-        try:
-            print(f'[relay] trying {relay_url} with transports={transports}')
-            relay_socket.connect(relay_url, transports=transports, wait_timeout=10)
-            relay_connected = True
-            relay_socket.emit('register_server', {
+    try:
+        print(f'[relay] registering at {relay_url}/api/register-server')
+        response = requests.post(
+            f'{relay_url}/api/register-server',
+            json={
                 'server_id': args.server_id,
                 'name': socket.gethostname(),
                 'hostname': socket.gethostname(),
                 'address': args.server_id,
                 'password_protected': bool(server_password),
-            })
+            },
+            timeout=10,
+        )
+        if response.ok:
+            relay_connected = True
+            print('[relay] registered successfully')
             if not relay_heartbeat_thread_started:
                 relay_heartbeat_thread_started = True
                 threading.Thread(target=relay_heartbeat, daemon=True).start()
             return
-        except Exception as e:
-            last_error = e
-            print(f'[relay] connection failed via {transports}: {e}')
+        print(f'[relay] registration failed: {response.status_code} {response.text}')
+    except Exception as e:
+        print(f'[relay] connection failed: {e}')
 
-    print(f'[relay] connection failed: {last_error}')
     if not relay_retry_thread_started:
         relay_retry_thread_started = True
         threading.Thread(target=retry_relay_connection, daemon=True).start()
@@ -235,39 +236,14 @@ def relay_heartbeat():
     while True:
         try:
             if relay_connected:
-                relay_socket.emit('server_heartbeat', {'server_id': args.server_id})
+                requests.post(
+                    f'{normalize_relay_url(args.relay_url)}/api/heartbeat',
+                    json={'server_id': args.server_id},
+                    timeout=5,
+                )
         except Exception:
             pass
         time.sleep(5)
-
-
-@relay_socket.event
-def on_connect():
-    global relay_connected
-    relay_connected = True
-    relay_socket.emit('register_server', {
-        'server_id': args.server_id,
-        'name': socket.gethostname(),
-        'hostname': socket.gethostname(),
-        'address': args.server_id,
-        'password_protected': bool(server_password),
-    })
-
-
-@relay_socket.on('request_session')
-def on_request_session(data):
-    data = data or {}
-    browser_sid = data.get('browser_sid')
-    if browser_sid:
-        relay_socket.emit('session_ready', {'browser_sid': browser_sid, 'server_id': args.server_id})
-
-
-@relay_socket.on('relay_command')
-def on_relay_command(data):
-    data = data or {}
-    cmd = data.get('cmd')
-    if cmd:
-        execute_command(cmd)
 
 
 if args.password is None:

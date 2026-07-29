@@ -1,5 +1,4 @@
 Flask
 Flask-SocketIO
 gunicorn
-eventlet
 python-socketio[client]
