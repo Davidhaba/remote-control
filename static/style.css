@@ -582,6 +582,43 @@ h2 {
     cursor: none;
 }
 
+.bottom-panel {
+    position: fixed;
+    left: 18px;
+    right: 18px;
+    bottom: 18px;
+    background: rgba(8, 14, 30, 0.92);
+    border-radius: 14px;
+    padding: 14px;
+    box-shadow: none;
+    z-index: 1050;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    display: none;
+}
+
+.panel-toolbar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+}
+
+.panel-toolbar .btn.active {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.panel-content {
+    display: block;
+}
+
+.panel-tab {
+    display: none;
+}
+
+.panel-tab.active {
+    display: block;
+}
+
 .toolbar {
     display: flex;
     gap: 8px;

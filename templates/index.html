@@ -91,6 +91,10 @@
                         class="fa fa-cogs"></i>
                     <t>Controls</t>
                 </button>
+                <button class="btn btn-ghost btn-wit btn-space" onclick="toggleKeyboardPanel()"><i
+                        class="fa fa-keyboard-o"></i>
+                    <t>Keyboard</t>
+                </button>
                 <button class="btn btn-ghost btn-wit fullscreen-btn" onclick="toggleFullscreen()"><i
                         class="fa fa-expand"></i>
                     <t>Fullscreen</t>
@@ -106,42 +110,7 @@
                 <button class="btn btn-ghost btn-small-text" title="Hide Controls" onclick="toggleControls()">X</button>
             </div>
 
-            <!-- Desktop Controls -->
-            <div id="desktop-controls">
-                <div class="control-section">
-                    <div class="control-title"><i class="fa fa-mouse-pointer"></i> Mouse</div>
-                    <div class="mouse-grid">
-                        <button class="big-btn" title="Left click" onclick="sendMouseClick('left')">Left</button>
-                        <button class="big-btn" title="Middle click" onclick="sendMouseClick('middle')">Middle</button>
-                        <button class="big-btn" title="Right click" onclick="sendMouseClick('right')">Right</button>
-                    </div>
-                </div>
-
-                <div class="control-section">
-                    <div class="control-title"><i class="fa fa-keyboard-o"></i> Keyboard</div>
-                    <div class="kbd-area">
-                        <input type="text" id="keyboardInput" class="keyboard-input" placeholder="Click to type..."
-                            autocomplete="off">
-                        <div class="key-helpers">
-                            <button class="btn btn-ghost" onclick="sendKey('esc')">Esc</button>
-                            <button class="btn btn-ghost" onclick="sendKey('tab')">Tab</button>
-                            <button class="btn btn-ghost" onclick="sendKey('backspace')">Backspace</button>
-                            <button class="btn btn-ghost" onclick="sendKey('delete')">Del</button>
-                            <button class="btn btn-ghost" onclick="sendKey('space')">Space</button>
-                            <button class="btn btn-ghost" onclick="sendKey('return')">Enter</button>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="control-section">
-                    <div class="control-title"><i class="fa fa-location-arrow"></i> Navigation</div>
-                    <div class="info-row">
-                        <button class="btn btn-ghost" onclick="sendKey('up')">↑</button>
-                        <button class="btn btn-ghost" onclick="sendKey('down')">↓</button>
-                    </div>
-                </div>
-
-                <div class="control-section" id="qualitySection">
+            <div class="control-section" id="qualitySection">
                     <div class="control-title"><i class="fa fa-image"></i> Quality</div>
                     <input type="range" id="qualitySlider" class="quality-slider" min="0" max="95" value="0" step="5"
                         oninput="onQualitySliderChange(event)">
@@ -149,31 +118,60 @@
                         <span>Auto</span><span id="qualityValue">Auto</span><span>95</span>
                     </div>
                 </div>
-            </div>
 
-            <!-- Android Controls -->
-            <div id="android-controls" class="android-controls">
-                <div class="control-section">
-                    <div class="control-title"><i class="fa fa-mouse-pointer"></i> Tap</div>
-                    <p class="control-description">Click on the screen to tap, drag to swipe</p>
-                </div>
-
-                <div class="control-section">
-                    <div class="control-title"><i class="fa fa-keyboard-o"></i> Input</div>
-                    <input type="text" id="androidKeyboardInput" class="keyboard-input android-input" placeholder="Type text..."
-                        autocomplete="off">
-                    <div class="btn-group">
-                        <button class="btn btn-small" onclick="sendAndroidKey(3)">Home</button>
-                        <button class="btn btn-small" onclick="sendAndroidKey(4)">Back</button>
-                        <button class="btn btn-small" onclick="sendAndroidKey(26)">Power</button>
+                <div class="control-section" id="throttleSection">
+                    <div class="control-title"><i class="fa fa-tachometer"></i> Throttle</div>
+                    <input type="range" id="throttleSlider" class="quality-slider" min="0" max="200" value="0" step="10"
+                        oninput="onThrottleSliderChange(event)">
+                    <div class="quality-meta">
+                        <span>Auto</span><span id="throttleValue">Auto</span><span>200 ms</span>
                     </div>
                 </div>
+            </div>
+        </div>
 
-                <div class="control-section">
-                    <div class="control-title"><i class="fa fa-volume-up"></i> Volume</div>
-                    <div class="btn-group">
-                        <button class="btn btn-small" onclick="sendAndroidVolume('up')">Up</button>
-                        <button class="btn btn-small" onclick="sendAndroidVolume('down')">Down</button>
+        <div class="bottom-panel" id="bottomPanel">
+            <div class="panel-toolbar">
+                <button class="btn btn-ghost active" data-tab="mouse" onclick="showKeyboardPanelTab('mouse')">Mouse</button>
+                <button class="btn btn-ghost" data-tab="keyboard" onclick="showKeyboardPanelTab('keyboard')">Keyboard</button>
+                <button class="btn btn-ghost" data-tab="navigation" onclick="showKeyboardPanelTab('navigation')">Navigation</button>
+            </div>
+            <div class="panel-content">
+                <div class="panel-tab active" id="panel-mouse">
+                    <div class="control-section">
+                        <div class="control-title"><i class="fa fa-mouse-pointer"></i> Mouse</div>
+                        <div class="mouse-grid">
+                            <button class="big-btn" title="Left click" onclick="sendMouseClick('left')">Left</button>
+                            <button class="big-btn" title="Middle click" onclick="sendMouseClick('middle')">Middle</button>
+                            <button class="big-btn" title="Right click" onclick="sendMouseClick('right')">Right</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="panel-tab" id="panel-keyboard" style="display:none;">
+                    <div class="control-section">
+                        <div class="control-title"><i class="fa fa-keyboard-o"></i> Keyboard</div>
+                        <div class="kbd-area">
+                            <input type="text" id="keyboardInput" class="keyboard-input" placeholder="Click to type..." autocomplete="off">
+                            <div class="key-helpers">
+                                <button class="btn btn-ghost" onclick="sendKey('esc')">Esc</button>
+                                <button class="btn btn-ghost" onclick="sendKey('tab')">Tab</button>
+                                <button class="btn btn-ghost" onclick="sendKey('backspace')">Backspace</button>
+                                <button class="btn btn-ghost" onclick="sendKey('delete')">Del</button>
+                                <button class="btn btn-ghost" onclick="sendKey('space')">Space</button>
+                                <button class="btn btn-ghost" onclick="sendKey('return')">Enter</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="panel-tab" id="panel-navigation" style="display:none;">
+                    <div class="control-section">
+                        <div class="control-title"><i class="fa fa-location-arrow"></i> Navigation</div>
+                        <div class="info-row">
+                            <button class="btn btn-ghost" onclick="sendKey('up')">↑</button>
+                            <button class="btn btn-ghost" onclick="sendKey('down')">↓</button>
+                            <button class="btn btn-ghost" onclick="sendKey('left')">←</button>
+                            <button class="btn btn-ghost" onclick="sendKey('right')">→</button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -446,6 +444,47 @@
             webrtcReady = false;
             remoteDescriptionSet = false;
             pendingRemoteCandidates = [];
+            lastFrameId = 0;
+            lastCursorImgSrc = '';
+            cursorImageAvailable = false;
+            cursorHotspotX = 0;
+            cursorHotspotY = 0;
+            if (remoteCursorImg) {
+                remoteCursorImg.style.display = 'none';
+                remoteCursorImg.src = '';
+            }
+            const canvasEl = document.getElementById('screen');
+            if (canvasEl) {
+                const ctx = canvasEl.getContext('2d');
+                ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+            }
+            isMouseDown = false;
+            keyboardSetupDone = false;
+            mouseSetupDone = false;
+            const keyboardInput = document.getElementById('keyboardInput');
+            if (keyboardInput) {
+                keyboardInput.value = '';
+                delete keyboardInput.dataset.setup;
+            }
+            const androidKeyboardInput = document.getElementById('androidKeyboardInput');
+            if (androidKeyboardInput) {
+                androidKeyboardInput.value = '';
+                delete androidKeyboardInput.dataset.setup;
+            }
+            resetControlPanels();
+        }
+
+        function resetControlPanels() {
+            const tab = document.querySelector('.panel-toolbar button.active');
+            if (tab) tab.classList.remove('active');
+            const buttons = document.querySelectorAll('.panel-toolbar button');
+            buttons.forEach(btn => btn.classList.remove('active'));
+            const tabs = document.querySelectorAll('.panel-tab');
+            tabs.forEach(el => el.style.display = 'none');
+            const defaultButton = document.querySelector('.panel-toolbar button[data-tab="mouse"]');
+            const defaultTab = document.getElementById('panel-mouse');
+            if (defaultButton) defaultButton.classList.add('active');
+            if (defaultTab) defaultTab.style.display = 'block';
         }
 
         function startWebRTCSession() {
@@ -458,6 +497,7 @@
             webrtcChannel = channel;
 
             channel.onopen = () => {
+                console.log('[browser] datachannel open');
                 webrtcReady = true;
                 const statusDiv = document.getElementById('status');
                 if (statusDiv) {
@@ -468,6 +508,7 @@
             };
 
             channel.onmessage = (event) => {
+                console.log('[browser] datachannel message event', typeof event.data, event.data?.length || 0);
                 if (!event.data) return;
                 try {
                     let text = null;
@@ -877,6 +918,18 @@
             }
         }
 
+        function onThrottleSliderChange(e) {
+            const v = parseInt(e.target.value, 10);
+            const tv = document.getElementById('throttleValue');
+            if (v === 0) {
+                if (tv) tv.textContent = 'Auto';
+                sendCommand({ type: 'set_throttle', mode: 'auto' });
+            } else {
+                if (tv) tv.textContent = `${v} ms`;
+                sendCommand({ type: 'set_throttle', mode: 'manual', interval_ms: v });
+            }
+        }
+
         window.addEventListener('resize', () => {
             if (canvas) {
                 updateCursorDisplay();
@@ -892,6 +945,7 @@
                 canvas.style.display = 'block';
                 ctx = canvas.getContext('2d');
             }
+            resetControlPanels();
 
             // Show/hide controls based on device type
             const desktopControls = document.getElementById('desktop-controls');
@@ -931,6 +985,19 @@
             const rp = document.getElementById('rightPanel');
             if (!rp) return;
             rp.classList.toggle('collapsed');
+        }
+
+        function toggleKeyboardPanel() {
+            const panel = document.getElementById('bottomPanel');
+            if (!panel) return;
+            panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
+        }
+
+        function showKeyboardPanelTab(tabName) {
+            const buttons = document.querySelectorAll('.panel-toolbar button');
+            buttons.forEach(btn => btn.classList.toggle('active', btn.dataset.tab === tabName));
+            const tabs = document.querySelectorAll('.panel-tab');
+            tabs.forEach(el => el.style.display = el.id === `panel-${tabName}` ? 'block' : 'none');
         }
 
         function togglePanel() {

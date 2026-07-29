@@ -208,9 +208,22 @@ def connect_to_relay():
             'direct_port': port,
             'password_protected': bool(server_password),
         })
-        threading.Thread(target=relay_heartbeat, daemon=True).start()
     except Exception as e:
+        relay_connected = False
         print(f'[relay] connection failed: {e}')
+
+
+def relay_reconnect_loop():
+    while True:
+        try:
+            if not relay_connected:
+                connect_to_relay()
+                if relay_connected:
+                    threading.Thread(target=relay_heartbeat, daemon=True).start()
+            time.sleep(5)
+        except Exception as exc:
+            print(f'[relay] reconnect loop error: {exc}')
+            time.sleep(5)
 
 
 def relay_heartbeat():
@@ -219,7 +232,8 @@ def relay_heartbeat():
             if relay_connected:
                 relay_socket.emit('server_heartbeat', {'server_id': args.server_id})
         except Exception:
-            pass
+            relay_connected = False
+            break
         time.sleep(5)
 
 
@@ -279,11 +293,15 @@ def on_session_denied(data):
 
 @relay_socket.on('connect')
 def on_relay_connect():
+    global relay_connected
+    relay_connected = True
     print('[server] relay socket connected')
 
 
 @relay_socket.on('disconnect')
 def on_relay_disconnect():
+    global relay_connected
+    relay_connected = False
     print('[server] relay socket disconnected')
 
 
@@ -380,11 +398,14 @@ def on_webrtc_candidate(data):
             print('[server] candidate parse failed', browser_sid)
             return
 
-        try:
-            asyncio.run_coroutine_threadsafe(session['pc'].addIceCandidate(ice_candidate), session['loop']).result(timeout=10)
-            print(f'[server] added ICE candidate from browser browser_sid={browser_sid}')
-        except Exception as exc:
-            print('[server] addIceCandidate failed', exc)
+        future = asyncio.run_coroutine_threadsafe(session['pc'].addIceCandidate(ice_candidate), session['loop'])
+        def _candidate_done(f):
+            exc = f.exception()
+            if exc is not None:
+                print(f'[server] addIceCandidate failed browser_sid={browser_sid}: {repr(exc)} candidate={candidate}')
+            else:
+                print(f'[server] added ICE candidate from browser browser_sid={browser_sid}')
+        future.add_done_callback(_candidate_done)
 
 
 def _run_webrtc_offer(browser_sid, offer):
@@ -414,6 +435,7 @@ def _run_webrtc_offer(browser_sid, offer):
 
         @pc.on("datachannel")
         def on_datachannel(channel):
+            print(f'[server] datachannel created for browser_sid={browser_sid} id={channel.label}')
             session['channel'] = channel
 
             def start_frame_sender():
@@ -425,8 +447,10 @@ def _run_webrtc_offer(browser_sid, offer):
                     if not done:
                         return
                 if channel.readyState != 'open':
+                    print(f'[server] datachannel not open yet for browser_sid={browser_sid} readyState={channel.readyState}')
                     return
                 session['open'] = True
+                print(f'[server] datachannel open, starting frame sender for browser_sid={browser_sid}')
                 coro = _send_webrtc_frames(browser_sid)
                 try:
                     loop = asyncio.get_running_loop()
@@ -439,6 +463,7 @@ def _run_webrtc_offer(browser_sid, offer):
 
             @channel.on("open")
             def on_open():
+                print(f'[server] datachannel open event for browser_sid={browser_sid}')
                 start_frame_sender()
 
             @channel.on("message")
@@ -451,11 +476,14 @@ def _run_webrtc_offer(browser_sid, offer):
                     data = json.loads(payload)
                     if isinstance(data, dict):
                         execute_command(data)
+                    else:
+                        print(f'[server] datachannel received non-object payload for browser_sid={browser_sid}: {payload}')
                 except Exception as exc:
-                    print(f'[server] datachannel message failed {exc}')
+                    print(f'[server] datachannel message failed for browser_sid={browser_sid}: {repr(exc)}')
 
             @channel.on("close")
             def on_close():
+                print(f'[server] datachannel closed for browser_sid={browser_sid}')
                 session['open'] = False
                 task = session.get('frame_task')
                 if task is not None:
@@ -511,12 +539,12 @@ def _run_webrtc_offer(browser_sid, offer):
         for queued_candidate in queued_candidates:
             ice_candidate = _build_candidate(queued_candidate)
             if ice_candidate is None:
-                print('[server] queued candidate parse failed', browser_sid)
+                print(f'[server] queued candidate parse failed browser_sid={browser_sid} queued_candidate={queued_candidate}')
                 continue
             try:
                 await pc.addIceCandidate(ice_candidate)
             except Exception as exc:
-                print('[server] addIceCandidate failed for queued candidate', exc)
+                print(f'[server] addIceCandidate failed for queued candidate browser_sid={browser_sid}: {repr(exc)} queued_candidate={queued_candidate}')
 
     global webrtc_loop, webrtc_loop_thread
     if webrtc_loop is None:
@@ -548,6 +576,7 @@ def _run_webrtc_offer(browser_sid, offer):
 
 async def _send_webrtc_frames(browser_sid):
     global frame_seq
+    print(f'[server] _send_webrtc_frames starting for browser_sid={browser_sid}')
     while True:
         try:
             with webrtc_sessions_lock:
@@ -555,9 +584,10 @@ async def _send_webrtc_frames(browser_sid):
                 channel = session.get('channel') if session else None
                 is_open = bool(session and session.get('open')) if session else False
             if not is_open or not channel or channel.readyState != 'open':
+                print(f'[server] _send_webrtc_frames stopping; channel not open for browser_sid={browser_sid}')
                 return
 
-            frame = capture_screen_dxgi()
+            frame = await asyncio.to_thread(capture_screen_dxgi)
             if frame is None:
                 await asyncio.sleep(0.05)
                 continue
@@ -570,8 +600,11 @@ async def _send_webrtc_frames(browser_sid):
             else:
                 quality = 70
 
-            _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
-            encoded_frame = base64.b64encode(buffer).decode('ascii')
+            def encode_frame():
+                _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
+                return base64.b64encode(buffer).decode('ascii')
+
+            encoded_frame = await asyncio.to_thread(encode_frame)
             with cursor_lock:
                 cursor_b64 = cursor_cache.get('b64')
                 hotspot_x = cursor_cache.get('hx', 0)
@@ -599,10 +632,18 @@ async def _send_webrtc_frames(browser_sid):
                     channel.bufferedAmountLowThreshold = 32768
 
                 channel.send(message)
+                if frame_seq % 10 == 0:
+                    print(f'[server] sent frame {frame_seq} browser_sid={browser_sid} size={len(message)} buffered={getattr(channel, "bufferedAmount", "n/a")}')
             except Exception as exc:
-                print(f'[server] frame send failed browser_sid={browser_sid} exc={exc}')
+                print(f'[server] frame send failed browser_sid={browser_sid} exc={repr(exc)}')
                 break
-            await asyncio.sleep(0.12)
+            delay = 0.12
+            if use_manual_throttle and manual_throttle_interval_ms is not None:
+                try:
+                    delay = max(0.01, float(manual_throttle_interval_ms) / 1000.0)
+                except Exception:
+                    delay = 0.12
+            await asyncio.sleep(delay)
         except Exception as exc:
             print(f'[server] _send_webrtc_frames exception browser_sid={browser_sid} exc={exc}')
             break
@@ -627,6 +668,8 @@ else:
 
 manual_quality = None
 use_manual_quality = False
+manual_throttle_interval_ms = None
+use_manual_throttle = False
 
 def capture_screen_dxgi():
     try:
@@ -1053,6 +1096,20 @@ def execute_command(cmd_data):
                 manual_quality = None
         except Exception:
             pass
+    elif cmd_type == "set_throttle":
+        global manual_throttle_interval_ms, use_manual_throttle
+        try:
+            mode = cmd_data.get('mode')
+            if mode == 'manual':
+                interval = cmd_data.get('interval_ms')
+                if interval is not None:
+                    manual_throttle_interval_ms = int(interval)
+                    use_manual_throttle = True
+            else:
+                use_manual_throttle = False
+                manual_throttle_interval_ms = None
+        except Exception:
+            pass
 
 def tcp_server():
     global port
@@ -1120,7 +1177,7 @@ cursor_thread.start()
 tcp_thread.start()
 port_ready.wait()
 udp_thread.start()
-connect_to_relay()
+threading.Thread(target=relay_reconnect_loop, daemon=True).start()
 try:
     tcp_thread.join()
     udp_thread.join()
