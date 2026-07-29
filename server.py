@@ -169,7 +169,7 @@ FIXED_FRAME_HEIGHT = 720
 
 parser = argparse.ArgumentParser(description='Remote control server')
 parser.add_argument('--password', default=None, help='Optional password required for client authentication')
-parser.add_argument('--relay-url', default=os.environ.get('RELAY_URL', 'https://your-render-app.onrender.com'), help='Render Socket.IO relay URL')
+parser.add_argument('--relay-url', default=os.environ.get('RELAY_URL', 'https://remote-control-ee7w.onrender.com/'), help='Render Socket.IO relay URL')
 parser.add_argument('--server-id', default=None, help='Unique ID for this server')
 args = parser.parse_args()
 
@@ -179,23 +179,56 @@ if not args.server_id:
 
 relay_socket = socketio.Client()
 relay_connected = False
+relay_heartbeat_thread_started = False
+relay_retry_thread_started = False
+
+
+def normalize_relay_url(value):
+    value = (value or '').strip()
+    if not value:
+        return 'https://remote-control-ee7w.onrender.com/'
+    if not value.startswith(('http://', 'https://')):
+        value = f'https://{value}'
+    return value.rstrip('/')
 
 
 def connect_to_relay():
-    global relay_socket, relay_connected
-    try:
-        relay_socket.connect(args.relay_url, transports=['websocket'])
-        relay_connected = True
-        relay_socket.emit('register_server', {
-            'server_id': args.server_id,
-            'name': socket.gethostname(),
-            'hostname': socket.gethostname(),
-            'address': args.server_id,
-            'password_protected': bool(server_password),
-        })
-        threading.Thread(target=relay_heartbeat, daemon=True).start()
-    except Exception as e:
-        print(f'[relay] connection failed: {e}')
+    global relay_socket, relay_connected, relay_heartbeat_thread_started, relay_retry_thread_started
+    if relay_connected:
+        return
+
+    relay_url = normalize_relay_url(args.relay_url)
+    last_error = None
+    for transports in (['websocket', 'polling'], ['polling'], ['websocket']):
+        try:
+            print(f'[relay] trying {relay_url} with transports={transports}')
+            relay_socket.connect(relay_url, transports=transports, wait_timeout=10)
+            relay_connected = True
+            relay_socket.emit('register_server', {
+                'server_id': args.server_id,
+                'name': socket.gethostname(),
+                'hostname': socket.gethostname(),
+                'address': args.server_id,
+                'password_protected': bool(server_password),
+            })
+            if not relay_heartbeat_thread_started:
+                relay_heartbeat_thread_started = True
+                threading.Thread(target=relay_heartbeat, daemon=True).start()
+            return
+        except Exception as e:
+            last_error = e
+            print(f'[relay] connection failed via {transports}: {e}')
+
+    print(f'[relay] connection failed: {last_error}')
+    if not relay_retry_thread_started:
+        relay_retry_thread_started = True
+        threading.Thread(target=retry_relay_connection, daemon=True).start()
+
+
+def retry_relay_connection():
+    while not relay_connected:
+        time.sleep(5)
+        connect_to_relay()
 
 
 def relay_heartbeat():
@@ -238,11 +271,14 @@ def on_relay_command(data):
 
 
 if args.password is None:
-    try:
-        entered_password = input('Set a password for remote access (leave empty to disable password): ').strip()
-        server_password = entered_password or None
-    except KeyboardInterrupt:
-        print('\nNo password set.')
+    if __name__ == '__main__':
+        try:
+            entered_password = input('Set a password for remote access (leave empty to disable password): ').strip()
+            server_password = entered_password or None
+        except KeyboardInterrupt:
+            print('\nNo password set.')
+            server_password = None
+    else:
         server_password = None
 else:
     server_password = args.password
