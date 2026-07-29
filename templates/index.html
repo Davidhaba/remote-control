@@ -13,7 +13,7 @@
 
 <body>
 
-    <div id="view-connect">
+    <div id="view-connect" style="display: block;">
         <div class="app-header">
             <div class="app-title">📱 Remote Control</div>
         </div>
@@ -81,7 +81,7 @@
         </div>
     </div>
 
-    <div id="view-screen" class="view-screen">
+    <div id="view-screen" class="view-screen" style="display: none;">
         <div id="screenHeader">
             <div class="header-el">
                 <button class="btn btn-ghost btn-wit" onclick="disconnectAndBack()"><i class="fa fa-arrow-left"></i>
@@ -248,6 +248,14 @@
             const rightPanel = document.getElementById('rightPanel');
             if (rightPanel && !rightPanel.classList.contains('collapsed')) {
                 rightPanel.classList.add('collapsed');
+            }
+            const viewScreen = document.getElementById('view-screen');
+            const viewConnect = document.getElementById('view-connect');
+            if (viewScreen) {
+                viewScreen.style.display = 'none';
+            }
+            if (viewConnect) {
+                viewConnect.style.display = 'block';
             }
         });
 
