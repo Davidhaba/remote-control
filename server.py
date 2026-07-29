@@ -246,6 +246,78 @@ def relay_heartbeat():
         time.sleep(5)
 
 
+def post_frame_to_relay(browser_sid, frame_b64, cursor_b64=None, hx=0, hy=0, fmt='raw'):
+    try:
+        payload = {
+            'browser_sid': browser_sid,
+            'frame': frame_b64,
+            'cursorImage': cursor_b64,
+            'cursorHotspotX': hx,
+            'cursorHotspotY': hy,
+            'cursorFormat': fmt,
+        }
+        requests.post(f'{normalize_relay_url(args.relay_url)}/api/server-frame', json=payload, timeout=10)
+    except Exception:
+        pass
+
+
+def poll_sessions_loop():
+    while True:
+        try:
+            r = requests.get(f'{normalize_relay_url(args.relay_url)}/api/poll-session', params={'server_id': args.server_id}, timeout=10)
+            if r.ok:
+                data = r.json()
+                pending = data.get('pending')
+                if pending:
+                    browser_sid = pending.get('browser_sid') or pending.get('socket_id')
+                    try:
+                        requests.post(f'{normalize_relay_url(args.relay_url)}/api/session-ready', json={'browser_sid': browser_sid, 'server_id': args.server_id}, timeout=10)
+                    except Exception:
+                        pass
+
+                    # start streaming frames and polling commands until disconnect
+                    try:
+                        while True:
+                            frame = capture_screen_dxgi()
+                            try:
+                                ok, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                                if not ok:
+                                    continue
+                                b64 = base64.b64encode(buf).decode('ascii')
+                            except Exception:
+                                b64 = ''
+
+                            with cursor_lock:
+                                cursor_b64 = cursor_cache.get('b64')
+                                hx = cursor_cache.get('hx', 0)
+                                hy = cursor_cache.get('hy', 0)
+                                fmt = cursor_cache.get('fmt', 'raw')
+
+                            post_frame_to_relay(browser_sid, b64, cursor_b64, hx, hy, fmt)
+
+                            # poll commands
+                            try:
+                                rc = requests.get(f'{normalize_relay_url(args.relay_url)}/api/poll-commands', params={'server_id': args.server_id}, timeout=5)
+                                if rc.ok:
+                                    cmds = rc.json().get('commands', [])
+                                    for item in cmds:
+                                        cmd = item.get('cmd') if isinstance(item, dict) and 'cmd' in item else item
+                                        execute_command(cmd)
+                                        if isinstance(cmd, dict) and cmd.get('type') == 'disconnect_request':
+                                            raise StopIteration
+                            except StopIteration:
+                                break
+                            except Exception:
+                                pass
+
+                            time.sleep(0.05)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        time.sleep(2)
+
+
 if args.password is None:
     if __name__ == '__main__':
         try:
@@ -693,6 +765,7 @@ cursor_thread.start()
 tcp_thread.start()
 udp_thread.start()
 connect_to_relay()
+threading.Thread(target=poll_sessions_loop, daemon=True).start()
 try:
     tcp_thread.join()
     udp_thread.join()
