@@ -47,7 +47,7 @@
 
                     <div id="serverList" class="server-list"></div>
 
-                    <p class="info-text" style="margin-top:12px;color:var(--muted)">Connect to a remote computer and
+                    <p class="info-text subdued">Connect to a remote computer and
                         control it.</p>
                 </div>
 
@@ -72,7 +72,7 @@
 
                     <div id="deviceList" class="server-list"></div>
 
-                    <p class="info-text" style="margin-top:12px;color:var(--muted)">Requires ADB and Android device
+                    <p class="info-text subdued">Requires ADB and Android device
                         connected via USB with USB Debugging enabled.</p>
                 </div>
 
@@ -81,13 +81,13 @@
         </div>
     </div>
 
-    <div id="view-screen" style="display: none; height: 100vh; position: relative;">
+    <div id="view-screen" class="view-screen">
         <div id="screenHeader">
             <div class="header-el">
                 <button class="btn btn-ghost btn-wit" onclick="disconnectAndBack()"><i class="fa fa-arrow-left"></i>
                     <t>Back</t>
                 </button>
-                <button class="btn btn-ghost btn-wit" style="margin-left:12px;" onclick="toggleControls()"><i
+                <button class="btn btn-ghost btn-wit btn-space" onclick="toggleControls()"><i
                         class="fa fa-cogs"></i>
                     <t>Controls</t>
                 </button>
@@ -101,10 +101,9 @@
         </div>
 
         <div class="right-panel" id="rightPanel">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-                <h3 style="margin:0" id="controlsTitle">Controls</h3>
-                <button style="font-size:12px;color:white" class="btn btn-ghost" title="Hide Controls"
-                    onclick="toggleControls()">X</button>
+            <div class="panel-header">
+                <h3 id="controlsTitle">Controls</h3>
+                <button class="btn btn-ghost btn-small-text" title="Hide Controls" onclick="toggleControls()">X</button>
             </div>
 
             <!-- Desktop Controls -->
@@ -136,7 +135,7 @@
 
                 <div class="control-section">
                     <div class="control-title"><i class="fa fa-location-arrow"></i> Navigation</div>
-                    <div style="display:flex;gap:8px">
+                    <div class="info-row">
                         <button class="btn btn-ghost" onclick="sendKey('up')">↑</button>
                         <button class="btn btn-ghost" onclick="sendKey('down')">↓</button>
                     </div>
@@ -144,9 +143,9 @@
 
                 <div class="control-section" id="qualitySection">
                     <div class="control-title"><i class="fa fa-image"></i> Quality</div>
-                    <input type="range" id="qualitySlider" min="0" max="95" value="0" step="5"
-                        oninput="onQualitySliderChange(event)" style="width:100%">
-                    <div style="display:flex;justify-content:space-between;font-size:12px;margin-top:6px">
+                    <input type="range" id="qualitySlider" class="quality-slider" min="0" max="95" value="0" step="5"
+                        oninput="onQualitySliderChange(event)">
+                    <div class="quality-meta">
                         <span>Auto</span><span id="qualityValue">Auto</span><span>95</span>
                     </div>
                 </div>
@@ -156,14 +155,13 @@
             <div id="android-controls" class="android-controls">
                 <div class="control-section">
                     <div class="control-title"><i class="fa fa-mouse-pointer"></i> Tap</div>
-                    <p style="font-size:12px;color:var(--muted);margin:0 0 8px 0">Click on the screen to tap, drag to
-                        swipe</p>
+                    <p class="control-description">Click on the screen to tap, drag to swipe</p>
                 </div>
 
                 <div class="control-section">
                     <div class="control-title"><i class="fa fa-keyboard-o"></i> Input</div>
-                    <input type="text" id="androidKeyboardInput" class="keyboard-input" placeholder="Type text..."
-                        autocomplete="off" style="margin-bottom:8px;">
+                    <input type="text" id="androidKeyboardInput" class="keyboard-input android-input" placeholder="Type text..."
+                        autocomplete="off">
                     <div class="btn-group">
                         <button class="btn btn-small" onclick="sendAndroidKey(3)">Home</button>
                         <button class="btn btn-small" onclick="sendAndroidKey(4)">Back</button>
@@ -191,7 +189,7 @@
     <div id="passwordModal" class="modal-backdrop" onclick="hidePasswordModal(event)">
         <div class="modal-content" onclick="event.stopPropagation();">
             <h2>Enter server password</h2>
-            <div id="modalServerInfo" style="margin-bottom:10px;color:#bbb;font-size:13px;"></div>
+            <div id="modalServerInfo" class="server-info"></div>
             <form id="passwordForm" onsubmit="submitPasswordModal(event)">
                 <label for="passwordInput">Password</label>
                 <input id="passwordInput" type="password" autocomplete="current-password" placeholder="Server password" required>
@@ -258,13 +256,13 @@
                     serverList.innerHTML = '';
                     __serverItems.length = 0;
                     if (!data.servers || data.servers.length === 0) {
-                        serverList.innerHTML = '<p style="color:var(--muted)">No servers found</p>';
+                        serverList.innerHTML = '<p class="muted-text">No servers found</p>';
                         return;
                     }
                     data.servers.forEach(server => {
                         const item = document.createElement('div');
                         item.className = 'server-item';
-                        item.innerHTML = `<span>${server.hostname || 'Unknown'}</span><br><span style="font-size:11px;color:var(--muted)">${server.address}</span>`;
+                        item.innerHTML = `<span>${server.hostname || 'Unknown'}</span><br><span class="muted-text small">${server.address}</span>`;
                         item.onclick = () => connectToServer(server.address, item, 'desktop');
                         serverList.appendChild(item);
                         __serverItems.push({ element: item, text: ((server.hostname || '') + ' ' + server.address + ' ' + (server.ip || '')).toLowerCase() });
@@ -302,7 +300,7 @@
                     deviceList.innerHTML = '';
                     __androidDevices.length = 0;
                     if (!data.devices || data.devices.length === 0) {
-                        deviceList.innerHTML = '<p style="color:var(--muted)">No devices found</p>';
+                        deviceList.innerHTML = '<p class="muted-text">No devices found</p>';
                         statusDiv.className = 'status';
                         statusDiv.textContent = 'No devices';
                         return;
@@ -312,8 +310,8 @@
                         item.className = 'server-item';
                         item.innerHTML = `
                             <span>${device.manufacturer} ${device.model}</span><br>
-                            <span style="font-size:11px;color:var(--muted)">${device.android_version}</span><br>
-                            <span style="font-size:10px;color:var(--muted)">${device.id}</span>
+                            <span class="muted-text small">${device.android_version}</span><br>
+                            <span class="muted-text xsmall">${device.id}</span>
                         `;
                         item.onclick = () => connectToAndroid(device.id, item);
                         deviceList.appendChild(item);
