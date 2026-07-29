@@ -1,4 +1,4 @@
 Flask
 Flask-SocketIO
 gunicorn
-python-socketio[client]
+gevent
