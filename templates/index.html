@@ -217,6 +217,7 @@
         let webrtcPeer = null;
         let webrtcChannel = null;
         let webrtcReady = false;
+        let webrtcFallbackTimer = null;
 
         let lastMouseX = 0, lastMouseY = 0;
         let isMouseDown = false;
@@ -532,7 +533,15 @@
             };
         }
 
+        function clearWebRTCFallback() {
+            if (webrtcFallbackTimer) {
+                clearTimeout(webrtcFallbackTimer);
+                webrtcFallbackTimer = null;
+            }
+        }
+
         function closeWebRTCConnection() {
+            clearWebRTCFallback();
             if (webrtcChannel) {
                 try { webrtcChannel.close(); } catch (e) { }
             }
@@ -549,12 +558,25 @@
             const pc = new RTCPeerConnection({ iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }] });
             webrtcPeer = pc;
             webrtcReady = false;
+            clearWebRTCFallback();
+
+            webrtcFallbackTimer = setTimeout(() => {
+                if (!webrtcReady && isConnected) {
+                    const statusDiv = document.getElementById('status');
+                    if (statusDiv) {
+                        statusDiv.className = 'status connected';
+                        statusDiv.textContent = 'Connected via relay fallback';
+                    }
+                    showScreenView();
+                }
+            }, 2500);
 
             const channel = pc.createDataChannel('control');
             webrtcChannel = channel;
 
             channel.onopen = () => {
                 webrtcReady = true;
+                clearWebRTCFallback();
                 const statusDiv = document.getElementById('status');
                 if (statusDiv) {
                     statusDiv.className = 'status connected';
@@ -610,12 +632,22 @@
             };
 
             pc.onconnectionstatechange = () => {
-                if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+                if (pc.connectionState === 'connected') {
+                    webrtcReady = true;
+                    clearWebRTCFallback();
                     const statusDiv = document.getElementById('status');
                     if (statusDiv) {
-                        statusDiv.className = 'status';
-                        statusDiv.textContent = 'WebRTC disconnected';
+                        statusDiv.className = 'status connected';
+                        statusDiv.textContent = 'Connected via WebRTC';
                     }
+                    showScreenView();
+                } else if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+                    const statusDiv = document.getElementById('status');
+                    if (statusDiv) {
+                        statusDiv.className = 'status connected';
+                        statusDiv.textContent = 'Connected via relay fallback';
+                    }
+                    showScreenView();
                 }
             };
 
@@ -695,6 +727,7 @@
                 if (data && data.server_id && selectedServer && data.server_id === selectedServer) {
                     statusDiv.className = 'status';
                     statusDiv.textContent = 'Connecting via WebRTC...';
+                    showScreenView();
                     startWebRTCSession();
                 }
             } catch (e) { }
