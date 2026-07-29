@@ -227,14 +227,12 @@ def discover_servers():
             try:
                 client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 client.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-                client.settimeout(0.4)
+                client.settimeout(0.15)
                 client.sendto(message, (target, 45))
                 try:
-                    while True:
-                        data, _ = client.recvfrom(1024)
-                        server_info = data.decode(errors='ignore').strip()
-                        if not server_info or server_info in seen_addresses:
-                            continue
+                    data, _ = client.recvfrom(1024)
+                    server_info = data.decode(errors='ignore').strip()
+                    if server_info and server_info not in seen_addresses:
                         seen_addresses.add(server_info)
                         host_part = server_info.split(':', 1)[0] if ':' in server_info else server_info
                         try:
@@ -248,6 +246,9 @@ def discover_servers():
                     client.close()
             except Exception:
                 continue
+
+            if servers:
+                break
 
         return jsonify({"servers": servers})
     except Exception as e:
