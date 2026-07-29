@@ -104,7 +104,7 @@
                     class="fa fa-chevron-down"></i></button>
         </div>
 
-        <div class="right-panel" id="rightPanel">
+        <div class="right-panel collapsed" id="rightPanel">
             <div class="panel-header">
                 <h3 id="controlsTitle">Controls</h3>
                 <button class="btn btn-ghost btn-small-text" title="Hide Controls" onclick="toggleControls()">X</button>
@@ -241,6 +241,14 @@
             }
             remoteCursorImg = document.getElementById('remoteCursorImg');
             setupMouseEvents();
+            const bottomPanel = document.getElementById('bottomPanel');
+            if (bottomPanel) {
+                bottomPanel.style.display = 'none';
+            }
+            const rightPanel = document.getElementById('rightPanel');
+            if (rightPanel && !rightPanel.classList.contains('collapsed')) {
+                rightPanel.classList.add('collapsed');
+            }
         });
 
         function switchTab(tab) {
