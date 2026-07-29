@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Remote Control</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .tab-btn {
+            padding: 10px 15px;
+            border: none;
+            background: transparent;
+            cursor: pointer;
+            color: var(--muted);
+            border-bottom: 3px solid transparent;
+            transition: all 0.3s;
+        }
+
+        .tab-btn.active {
+            color: var(--primary);
+            border-bottom-color: var(--primary);
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .android-controls {
+            display: none;
+        }
+
+        .android-controls.active {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        .btn-small {
+            padding: 8px 12px;
+            font-size: 12px;
+            flex: 1;
+            min-width: 60px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div id="view-connect">
+        <div class="app-header">
+            <div class="app-title">📱 Remote Control</div>
+        </div>
+
+        <div class="layout">
+            <div class="card sidebar">
+                <div class="tabs">
+                    <button class="tab-btn active" onclick="switchTab('desktop')"><i class="fa fa-desktop"></i>
+                        Desktop</button>
+                    <button class="tab-btn" onclick="switchTab('mobile')"><i class="fa fa-mobile"></i> Mobile</button>
+                </div>
+
+                <!-- Desktop Tab -->
+                <div id="tab-desktop" class="tab-content active">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+                        <h2 style="margin:0">Servers</h2>
+                        <div style="font-size:12px;color:var(--muted)">Local network</div>
+                    </div>
+
+                    <div class="controls" style="margin-top:10px">
+                        <button class="btn btn-primary" onclick="discoverServers()"><i class="fa fa-search"></i>
+                            Discover
+                            servers</button>
+                    </div>
+
+                    <div class="search">
+                        <input id="serverSearch" placeholder="Filter servers..." oninput="filterServers()">
+                        <button class="btn"
+                            onclick="document.getElementById('serverSearch').value='';filterServers();">✖</button>
+                    </div>
+
+                    <div id="serverList" class="server-list"></div>
+
+                    <p class="info-text" style="margin-top:12px;color:var(--muted)">Connect to a remote computer and
+                        control it.</p>
+                </div>
+
+                <!-- Mobile Tab -->
+                <div id="tab-mobile" class="tab-content">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+                        <h2 style="margin:0">Devices</h2>
+                        <div style="font-size:12px;color:var(--muted)">Android</div>
+                    </div>
+
+                    <div class="controls" style="margin-top:10px">
+                        <button class="btn btn-primary" onclick="discoverAndroidDevices()"><i class="fa fa-search"></i>
+                            Discover
+                            devices</button>
+                    </div>
+
+                    <div class="search">
+                        <input id="deviceSearch" placeholder="Filter devices..." oninput="filterAndroidDevices()">
+                        <button class="btn"
+                            onclick="document.getElementById('deviceSearch').value='';filterAndroidDevices();">✖</button>
+                    </div>
+
+                    <div id="deviceList" class="server-list"></div>
+
+                    <p class="info-text" style="margin-top:12px;color:var(--muted)">Requires ADB and Android device
+                        connected via USB with USB Debugging enabled.</p>
+                </div>
+
+                <div id="status" class="status">Disconnected</div>
+            </div>
+        </div>
+    </div>
+
+    <div id="view-screen" style="display: none; height: 100vh; position: relative;">
+        <div id="screenHeader">
+            <div class="header-el">
+                <button class="btn btn-ghost btn-wit" onclick="disconnectAndBack()"><i class="fa fa-arrow-left"></i>
+                    <t>Back</t>
+                </button>
+                <button class="btn btn-ghost btn-wit" style="margin-left:12px;" onclick="toggleControls()"><i
+                        class="fa fa-cogs"></i>
+                    <t>Controls</t>
+                </button>
+                <button class="btn btn-ghost btn-wit fullscreen-btn" onclick="toggleFullscreen()"><i
+                        class="fa fa-expand"></i>
+                    <t>Fullscreen</t>
+                </button>
+            </div>
+            <button class="btn btn-ghost" id="hide-panel-btn" onclick="togglePanel()"><i
+                    class="fa fa-chevron-down"></i></button>
+        </div>
+
+        <div class="right-panel" id="rightPanel">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+                <h3 style="margin:0" id="controlsTitle">Controls</h3>
+                <button style="font-size:12px;color:white" class="btn btn-ghost" title="Hide Controls"
+                    onclick="toggleControls()">X</button>
+            </div>
+
+            <!-- Desktop Controls -->
+            <div id="desktop-controls">
+                <div class="control-section">
+                    <div class="control-title"><i class="fa fa-mouse-pointer"></i> Mouse</div>
+                    <div class="mouse-grid">
+                        <button class="big-btn" title="Left click" onclick="sendMouseClick('left')">Left</button>
+                        <button class="big-btn" title="Middle click" onclick="sendMouseClick('middle')">Middle</button>
+                        <button class="big-btn" title="Right click" onclick="sendMouseClick('right')">Right</button>
+                    </div>
+                </div>
+
+                <div class="control-section">
+                    <div class="control-title"><i class="fa fa-keyboard-o"></i> Keyboard</div>
+                    <div class="kbd-area">
+                        <input type="text" id="keyboardInput" class="keyboard-input" placeholder="Click to type..."
+                            autocomplete="off">
+                        <div class="key-helpers">
+                            <button class="btn btn-ghost" onclick="sendKey('esc')">Esc</button>
+                            <button class="btn btn-ghost" onclick="sendKey('tab')">Tab</button>
+                            <button class="btn btn-ghost" onclick="sendKey('backspace')">Backspace</button>
+                            <button class="btn btn-ghost" onclick="sendKey('delete')">Del</button>
+                            <button class="btn btn-ghost" onclick="sendKey('space')">Space</button>
+                            <button class="btn btn-ghost" onclick="sendKey('return')">Enter</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="control-section">
+                    <div class="control-title"><i class="fa fa-location-arrow"></i> Navigation</div>
+                    <div style="display:flex;gap:8px">
+                        <button class="btn btn-ghost" onclick="sendKey('up')">↑</button>
+                        <button class="btn btn-ghost" onclick="sendKey('down')">↓</button>
+                    </div>
+                </div>
+
+                <div class="control-section" id="qualitySection">
+                    <div class="control-title"><i class="fa fa-image"></i> Quality</div>
+                    <input type="range" id="qualitySlider" min="0" max="95" value="0" step="5"
+                        oninput="onQualitySliderChange(event)" style="width:100%">
+                    <div style="display:flex;justify-content:space-between;font-size:12px;margin-top:6px">
+                        <span>Auto</span><span id="qualityValue">Auto</span><span>95</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Android Controls -->
+            <div id="android-controls" class="android-controls">
+                <div class="control-section">
+                    <div class="control-title"><i class="fa fa-mouse-pointer"></i> Tap</div>
+                    <p style="font-size:12px;color:var(--muted);margin:0 0 8px 0">Click on the screen to tap, drag to
+                        swipe</p>
+                </div>
+
+                <div class="control-section">
+                    <div class="control-title"><i class="fa fa-keyboard-o"></i> Input</div>
+                    <input type="text" id="androidKeyboardInput" class="keyboard-input" placeholder="Type text..."
+                        autocomplete="off" style="margin-bottom:8px;">
+                    <div class="btn-group">
+                        <button class="btn btn-small" onclick="sendAndroidKey(3)">Home</button>
+                        <button class="btn btn-small" onclick="sendAndroidKey(4)">Back</button>
+                        <button class="btn btn-small" onclick="sendAndroidKey(26)">Power</button>
+                    </div>
+                </div>
+
+                <div class="control-section">
+                    <div class="control-title"><i class="fa fa-volume-up"></i> Volume</div>
+                    <div class="btn-group">
+                        <button class="btn btn-small" onclick="sendAndroidVolume('up')">Up</button>
+                        <button class="btn btn-small" onclick="sendAndroidVolume('down')">Down</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="screen-area">
+            <canvas id="screen"></canvas>
+            <img id="remoteCursorImg" alt="cursor" />
+            <div id="remoteCursorCircle"></div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        let isConnected = false;
+        let selectedServer = null;
+        let currentDeviceType = null;
+        let canvas = null;
+        let ctx = null;
+
+        let lastMouseX = 0, lastMouseY = 0;
+        let isMouseDown = false;
+
+        let keyboardSetupDone = false;
+        let mouseSetupDone = false;
+        const TAP_MAX_MS = 250;
+        const TAP_MOVE_THRESHOLD = 10;
+        let touchStartTime = 0;
+        let touchMoved = false;
+
+        const __serverItems = [];
+        const __androidDevices = [];
+
+        let remoteCursorImg = null;
+        let cursorHotspotX = 0, cursorHotspotY = 0;
+        let cursorImageAvailable = false;
+        let cursorScale = 1.0;
+
+        window.addEventListener('load', () => {
+            canvas = document.getElementById('screen');
+            if (canvas) {
+                ctx = canvas.getContext('2d');
+            }
+            remoteCursorImg = document.getElementById('remoteCursorImg');
+            setupMouseEvents();
+        });
+
+        function switchTab(tab) {
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+
+            event.target.classList.add('active');
+            document.getElementById('tab-' + tab).classList.add('active');
+        }
+
+        function discoverServers() {
+            const statusDiv = document.getElementById('status');
+            statusDiv.className = 'status loading';
+            statusDiv.textContent = 'Searching...';
+
+            fetch('/api/discover-servers')
+                .then(res => res.json())
+                .then(data => {
+                    const serverList = document.getElementById('serverList');
+                    serverList.innerHTML = '';
+                    __serverItems.length = 0;
+                    if (!data.servers || data.servers.length === 0) {
+                        serverList.innerHTML = '<p style="color:var(--muted)">No servers found</p>';
+                        return;
+                    }
+                    data.servers.forEach(server => {
+                        const item = document.createElement('div');
+                        item.className = 'server-item';
+                        item.innerHTML = `<span>${server.hostname || 'Unknown'}</span><br><span style="font-size:11px;color:var(--muted)">${server.address}</span>`;
+                        item.onclick = () => connectToServer(server.address, item, 'desktop');
+                        serverList.appendChild(item);
+                        __serverItems.push({ element: item, text: ((server.hostname || '') + ' ' + server.address + ' ' + (server.ip || '')).toLowerCase() });
+                    });
+                    statusDiv.className = 'status';
+                    statusDiv.textContent = 'Servers found';
+                })
+                .catch(() => {
+                    const statusDiv = document.getElementById('status');
+                    statusDiv.className = 'status';
+                    statusDiv.textContent = 'Search failed';
+                });
+        }
+
+        function discoverAndroidDevices() {
+            const statusDiv = document.getElementById('status');
+            statusDiv.className = 'status loading';
+            statusDiv.textContent = 'Searching...';
+
+            fetch('/api/discover-android', { method: 'GET' })
+                .then(res => {
+                    if (!res.ok || res.status === 404) {
+                        throw new Error('Failed to discover Android devices');
+                    }
+                    if (res.headers.get('Content-Type') !== 'application/json') {
+                        throw new Error('Invalid response from server');
+                    }
+                    return res.json();
+                })
+                .then(data => {
+                    if (!data) {
+                        throw new Error('Invalid response from server');
+                    }
+                    const deviceList = document.getElementById('deviceList');
+                    deviceList.innerHTML = '';
+                    __androidDevices.length = 0;
+                    if (!data.devices || data.devices.length === 0) {
+                        deviceList.innerHTML = '<p style="color:var(--muted)">No devices found</p>';
+                        statusDiv.className = 'status';
+                        statusDiv.textContent = 'No devices';
+                        return;
+                    }
+                    data.devices.forEach(device => {
+                        const item = document.createElement('div');
+                        item.className = 'server-item';
+                        item.innerHTML = `
+                            <span>${device.manufacturer} ${device.model}</span><br>
+                            <span style="font-size:11px;color:var(--muted)">${device.android_version}</span><br>
+                            <span style="font-size:10px;color:var(--muted)">${device.id}</span>
+                        `;
+                        item.onclick = () => connectToAndroid(device.id, item);
+                        deviceList.appendChild(item);
+                        __androidDevices.push({ element: item, text: (device.manufacturer + ' ' + device.model + ' ' + device.id).toLowerCase() });
+                    });
+                    statusDiv.className = 'status';
+                    statusDiv.textContent = 'Devices found';
+                })
+                .catch(err => {
+                    const statusDiv = document.getElementById('status');
+                    statusDiv.className = 'status';
+                    statusDiv.textContent = 'Search failed';
+                    console.error('Android discovery error:', err);
+                });
+        }
+
+        discoverServers();
+
+        function filterServers() {
+            const q = document.getElementById('serverSearch').value.trim().toLowerCase();
+            __serverItems.forEach(it => {
+                it.element.style.display = it.text.includes(q) ? '' : 'none';
+            });
+        }
+
+        function filterAndroidDevices() {
+            const q = document.getElementById('deviceSearch').value.trim().toLowerCase();
+            __androidDevices.forEach(it => {
+                it.element.style.display = it.text.includes(q) ? '' : 'none';
+            });
+        }
+
+        function connectToServer(address, element, type) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.className = 'status loading';
+            statusDiv.textContent = 'Connecting...';
+            document.querySelectorAll('.server-item').forEach(el => el.classList.remove('selected'));
+            if (element) element.classList.add('selected');
+            selectedServer = address;
+            currentDeviceType = type;
+
+            fetch('/api/connect', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ address: address, type: 'desktop' })
+            })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.status === 'connected') {
+                        statusDiv.className = 'status connected';
+                        statusDiv.textContent = 'Connected';
+                        showScreenView();
+                    } else {
+                        statusDiv.className = 'status';
+                        statusDiv.textContent = 'Connection failed';
+                    }
+                })
+                .catch(() => {
+                    statusDiv.className = 'status';
+                    statusDiv.textContent = 'Connection error';
+                });
+        }
+
+        function connectToAndroid(deviceId, element) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.className = 'status loading';
+            statusDiv.textContent = 'Connecting...';
+            document.querySelectorAll('.server-item').forEach(el => el.classList.remove('selected'));
+            if (element) element.classList.add('selected');
+            currentDeviceType = 'android';
+
+            fetch('/api/connect', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ device_id: deviceId, type: 'android' })
+            })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.status === 'connected') {
+                        statusDiv.className = 'status connected';
+                        statusDiv.textContent = 'Connected';
+                        showScreenView();
+                    } else {
+                        statusDiv.className = 'status';
+                        statusDiv.textContent = 'Connection failed';
+                    }
+                })
+                .catch(() => {
+                    statusDiv.className = 'status';
+                    statusDiv.textContent = 'Connection error';
+                });
+        }
+
+        let screenWidth = 1280, screenHeight = 720;
+        let lastCursorImgSrc = '';
+
+        socket.on('frame', (data) => {
+            if (canvas && ctx && data.frame) {
+                const img = new Image();
+                img.onload = () => {
+                    screenWidth = img.width;
+                    screenHeight = img.height;
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    ctx.drawImage(img, 0, 0);
+
+                    if (data.cursorImage && currentDeviceType !== 'android') {
+                        const src = 'data:image/png;base64,' + data.cursorImage;
+                        if (src !== lastCursorImgSrc) {
+                            remoteCursorImg.src = src;
+                            lastCursorImgSrc = src;
+                            cursorHotspotX = data.cursorHotspotX || 0;
+                            cursorHotspotY = data.cursorHotspotY || 0;
+                            cursorImageAvailable = true;
+                        }
+                        remoteCursorImg.style.display = 'block';
+                    } else if (data.cursorRemoved) {
+                        remoteCursorImg.style.display = 'none';
+                        cursorImageAvailable = false;
+                    }
+                    updateCursorDisplay();
+                };
+                img.src = 'data:image/jpeg;base64,' + data.frame;
+            }
+        });
+
+        function updateCursorDisplay() {
+            if (!canvas) return;
+            const rect = canvas.getBoundingClientRect();
+            const cx = Math.round(lastMouseX * rect.width / screenWidth) + rect.left;
+            const cy = Math.round(lastMouseY * rect.height / screenHeight) + rect.top;
+            const displayScale = rect.width / screenWidth;
+
+            if (cursorImageAvailable && currentDeviceType !== 'android') {
+                remoteCursorImg.style.left = (cx - cursorHotspotX) + 'px';
+                remoteCursorImg.style.top = (cy - cursorHotspotY) + 'px';
+                remoteCursorImg.style.transform = `scale(${displayScale})`;
+                remoteCursorImg.style.transformOrigin = `${cursorHotspotX}px ${cursorHotspotY}px`;
+                document.getElementById('remoteCursorCircle').style.display = 'none';
+            } else {
+                const circle = document.getElementById('remoteCursorCircle');
+                const circleSize = 10 * displayScale;
+                circle.style.width = circleSize + 'px';
+                circle.style.height = circleSize + 'px';
+                circle.style.left = (cx - circleSize / 2) + 'px';
+                circle.style.top = (cy - circleSize / 2) + 'px';
+                circle.style.borderWidth = Math.max(1, Math.ceil(displayScale)) + 'px';
+                circle.style.display = 'block';
+            }
+        }
+
+        function setupMouseEvents() {
+            if (mouseSetupDone) return;
+            mouseSetupDone = true;
+            if (!canvas) canvas = document.getElementById('screen');
+            if (!canvas) return;
+
+            let cachedRect = canvas.getBoundingClientRect();
+            let pendingMove = null;
+            let rafId = 0;
+
+            function coordsFromClient(clientX, clientY) {
+                const displayX = clientX - cachedRect.left;
+                const displayY = clientY - cachedRect.top;
+                const screenX = Math.round(displayX * screenWidth / cachedRect.width);
+                const screenY = Math.round(displayY * screenHeight / cachedRect.height);
+                return { screenX, screenY };
+            }
+
+            function flushPendingMove() {
+                if (pendingMove) {
+                    sendCommand({ type: 'mouse_move', x: pendingMove.x / screenWidth, y: pendingMove.y / screenHeight, normalized: true });
+                }
+                rafId = 0;
+            }
+
+            canvas.addEventListener('mouseenter', () => {
+                cachedRect = canvas.getBoundingClientRect();
+            });
+
+            canvas.addEventListener('mousemove', (e) => {
+                const coords = coordsFromClient(e.clientX, e.clientY);
+                lastMouseX = coords.screenX;
+                lastMouseY = coords.screenY;
+                updateCursorDisplay();
+
+                if (currentDeviceType === 'android') {
+                    // For Android, tap on move
+                    return;
+                }
+
+                pendingMove = { x: coords.screenX, y: coords.screenY };
+                if (!rafId) {
+                    rafId = requestAnimationFrame(flushPendingMove);
+                }
+            });
+
+            canvas.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                const coords = coordsFromClient(e.clientX, e.clientY);
+                lastMouseX = coords.screenX;
+                lastMouseY = coords.screenY;
+                updateCursorDisplay();
+
+                if (currentDeviceType === 'android') {
+                    sendCommand({ type: 'tap', x: coords.screenX, y: coords.screenY });
+                } else {
+                    const button = e.button === 0 ? 'left' : e.button === 2 ? 'right' : 'middle';
+                    sendCommand({ type: 'mouse_down', button, x: coords.screenX / screenWidth, y: coords.screenY / screenHeight, normalized: true });
+                }
+            });
+
+            canvas.addEventListener('mouseup', (e) => {
+                e.preventDefault();
+                const coords = coordsFromClient(e.clientX, e.clientY);
+                lastMouseX = coords.screenX;
+                lastMouseY = coords.screenY;
+                updateCursorDisplay();
+
+                if (currentDeviceType !== 'android') {
+                    const button = e.button === 0 ? 'left' : e.button === 2 ? 'right' : 'middle';
+                    sendCommand({ type: 'mouse_up', button, x: coords.screenX / screenWidth, y: coords.screenY / screenHeight, normalized: true });
+                }
+            });
+
+            canvas.addEventListener('wheel', (e) => {
+                e.preventDefault();
+                if (currentDeviceType === 'android') {
+                    // No scroll for Android
+                    return;
+                }
+                const clicks = e.deltaY > 0 ? -1 : 1;
+                sendCommand({ type: 'mouse_scroll', clicks });
+            }, { passive: false });
+
+            canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+        }
+
+        function setupKeyboardInput() {
+            if (!currentDeviceType) return;
+
+            if (currentDeviceType === 'desktop') {
+                setupDesktopKeyboard();
+            } else if (currentDeviceType === 'android') {
+                setupAndroidKeyboard();
+            }
+        }
+
+        function setupDesktopKeyboard() {
+            const input = document.getElementById('keyboardInput');
+            if (!input || input.dataset.setup) return;
+            input.dataset.setup = 'true';
+
+            input.addEventListener('keydown', (e) => {
+                e.preventDefault();
+                const specialKeys = { 'Enter': 'return', 'Backspace': 'backspace', 'Tab': 'tab', 'Escape': 'esc', ' ': 'space', 'Delete': 'delete', 'ArrowUp': 'up', 'ArrowDown': 'down', 'ArrowLeft': 'left', 'ArrowRight': 'right' };
+                if (specialKeys[e.key]) { sendKey(specialKeys[e.key]); } else if (e.key.length === 1) { sendCommand({ type: 'write', text: e.key }); }
+                input.value = '';
+            });
+            input.addEventListener('paste', (e) => { e.preventDefault(); const text = (e.clipboardData || window.clipboardData).getData('text'); sendCommand({ type: 'write', text: text }); input.value = ''; });
+        }
+
+        function setupAndroidKeyboard() {
+            const input = document.getElementById('androidKeyboardInput');
+            if (!input || input.dataset.setup) return;
+            input.dataset.setup = 'true';
+
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    const text = input.value.trim();
+                    if (text) {
+                        sendCommand({ type: 'text', text: text });
+                        input.value = '';
+                    }
+                    return;
+                }
+                if (e.key === 'Backspace') {
+                    e.preventDefault();
+                    sendCommand({ type: 'key', key_code: 67 }); // DEL key
+                    return;
+                }
+            });
+        }
+
+        function sendKey(key) { sendCommand({ type: 'key_press', key }); }
+
+        function sendAndroidKey(keyCode) {
+            sendCommand({ type: 'key', key_code: keyCode });
+        }
+
+        function sendAndroidVolume(direction) {
+            const key_code = direction === 'up' ? 24 : 25;
+            sendCommand({ type: 'key', key_code: key_code });
+        }
+
+        function sendCommand(cmd) { if (isConnected) { socket.emit('command', { cmd }); } }
+
+        function onQualitySliderChange(e) {
+            const v = parseInt(e.target.value, 10);
+            const qv = document.getElementById('qualityValue');
+            if (v === 0) {
+                if (qv) qv.textContent = 'Auto';
+                sendCommand({ type: 'set_quality', mode: 'auto' });
+            } else {
+                if (qv) qv.textContent = v;
+                sendCommand({ type: 'set_quality', mode: 'manual', quality: v });
+            }
+        }
+
+        window.addEventListener('resize', () => {
+            if (canvas) {
+                updateCursorDisplay();
+            }
+        });
+
+        function showScreenView() {
+            isConnected = true;
+            document.getElementById('view-connect').style.display = 'none';
+            document.getElementById('view-screen').style.display = 'block';
+            canvas = document.getElementById('screen');
+            if (canvas) {
+                canvas.style.display = 'block';
+                ctx = canvas.getContext('2d');
+            }
+
+            // Show/hide controls based on device type
+            const desktopControls = document.getElementById('desktop-controls');
+            const androidControls = document.getElementById('android-controls');
+
+            if (currentDeviceType === 'android') {
+                desktopControls.style.display = 'none';
+                androidControls.classList.add('active');
+                document.getElementById('qualitySection').style.display = 'none';
+            } else {
+                desktopControls.style.display = 'block';
+                androidControls.classList.remove('active');
+                document.getElementById('qualitySection').style.display = 'block';
+            }
+
+            const rp = document.getElementById('rightPanel');
+            if (rp) rp.classList.add('collapsed');
+
+            setupKeyboardInput();
+        }
+
+        function disconnectAndBack() {
+            try {
+                fetch('/api/disconnect', { method: 'POST' }).catch(() => { });
+                try { socket.emit('command', { cmd: { type: 'disconnect_request' } }); } catch (e) { }
+            } catch (e) { }
+            isConnected = false;
+            currentDeviceType = null;
+            document.getElementById('view-screen').style.display = 'none';
+            document.getElementById('view-connect').style.display = 'block';
+            const statusDiv = document.getElementById('status');
+            if (statusDiv) { statusDiv.className = 'status'; statusDiv.textContent = 'Disconnected'; }
+        }
+
+        function toggleControls() {
+            const rp = document.getElementById('rightPanel');
+            if (!rp) return;
+            rp.classList.toggle('collapsed');
+        }
+
+        function togglePanel() {
+            const rp = document.getElementById('screenHeader');
+            if (!rp) return;
+            rp.classList.toggle('collapsed');
+        }
+
+        function sendMouseClick(button) {
+            const x = lastMouseX / Math.max(1, screenWidth);
+            const y = lastMouseY / Math.max(1, screenHeight);
+            sendCommand({ type: 'mouse_click', button, x, y, normalized: true });
+        }
+
+        let isFullscreen = false;
+        function toggleFullscreen() {
+            isFullscreen = !isFullscreen;
+            const btn = document.querySelector('.fullscreen-btn');
+            if (btn) btn.innerHTML = isFullscreen ? '<i class="fa fa-compress"></i><t>Minimize</t>' : '<i class="fa fa-expand"></i><t>Fullscreen</t>';
+            if (isFullscreen) { document.documentElement.requestFullscreen().catch(() => { }); } else { if (document.fullscreenElement) { document.exitFullscreen(); } }
+        }
+
+        document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && isFullscreen) { toggleFullscreen(); } });
+
+        window.addEventListener('beforeunload', (e) => {
+            try {
+                if (isConnected) {
+                    fetch('/api/disconnect', { method: 'POST' }).catch(() => { });
+                }
+            } catch (ex) { }
+        });
+    </script>
+</body>
+
+</html>
