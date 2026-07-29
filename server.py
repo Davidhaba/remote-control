@@ -320,6 +320,22 @@ def on_relay_command(data):
         execute_command(cmd)
 
 
+@relay_socket.on('end_session')
+def on_end_session(data):
+    data = data or {}
+    browser_sid = data.get('browser_sid')
+    if browser_sid:
+        authorized_browsers.pop(browser_sid, None)
+
+
+@relay_socket.on('session_denied')
+def on_session_denied(data):
+    data = data or {}
+    browser_sid = data.get('browser_sid')
+    if browser_sid:
+        authorized_browsers.pop(browser_sid, None)
+
+
 if args.password is None:
     try:
         while True:

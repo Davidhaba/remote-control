@@ -14,6 +14,23 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 registered_servers = {}
 browser_sessions = {}
+SESSION_TIMEOUT = 300
+SERVER_TIMEOUT = 30
+
+
+def _cleanup_sessions():
+    while True:
+        try:
+            now = time.time()
+            for session_id, session in list(browser_sessions.items()):
+                if now - session.get('created_at', now) > SESSION_TIMEOUT:
+                    browser_sessions.pop(session_id, None)
+            for server_id, server_info in list(registered_servers.items()):
+                if now - server_info.get('last_seen', now) > SERVER_TIMEOUT:
+                    registered_servers.pop(server_id, None)
+        except Exception:
+            pass
+        time.sleep(10)
 
 
 def _server_snapshot(server_id, server_info):
@@ -48,7 +65,7 @@ def discover_servers():
 
 @app.route('/api/connect', methods=['POST'])
 def connect():
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     server_id = data.get('server_id') or data.get('address')
     socket_id = data.get('socket_id')
     password = data.get('password')
@@ -58,16 +75,20 @@ def connect():
     if not password or not str(password).strip():
         return jsonify({'error': 'Password is required'}), 400
 
-    browser_sessions[socket_id] = {
-        'server_id': server_id,
-        'socket_id': socket_id,
-        'password': password,
-        'type': data.get('type', 'desktop'),
-    }
-
     server = registered_servers.get(server_id)
     if not server or not server.get('sid'):
         return jsonify({'error': 'Selected server is not available'}), 404
+
+    if not server.get('password_protected'):
+        return jsonify({'error': 'Server must be password protected'}), 403
+
+    browser_sessions[socket_id] = {
+        'server_id': server_id,
+        'socket_id': socket_id,
+        'password': password.strip(),
+        'type': data.get('type', 'desktop'),
+        'created_at': time.time(),
+    }
 
     socketio.emit('request_session', {
         'browser_sid': socket_id,
@@ -133,7 +154,14 @@ def handle_socket_connect():
 @socketio.on('register_server')
 def handle_register_server(data):
     data = data or {}
+    if not bool(data.get('password_protected')):
+        return
+
     server_id = data.get('server_id') or f"server-{request.sid[:8]}"
+    existing = registered_servers.get(server_id)
+    if existing and existing.get('sid') != request.sid and time.time() - existing.get('last_seen', 0) < SERVER_TIMEOUT:
+        return
+
     registered_servers[server_id] = {
         'sid': request.sid,
         'name': data.get('name', server_id),
@@ -141,7 +169,7 @@ def handle_register_server(data):
         'address': data.get('address', server_id),
         'status': 'online',
         'last_seen': time.time(),
-        'password_protected': bool(data.get('password_protected')),
+        'password_protected': True,
     }
 
 
@@ -225,6 +253,13 @@ def handle_command(data):
             pass
         return
 
+    if not server.get('password_protected'):
+        try:
+            socketio.emit('session_denied', {'server_id': server_id, 'reason': 'server_not_secure'}, room=browser_sid)
+        except Exception:
+            pass
+        return
+
     socketio.emit('relay_command', {'browser_sid': browser_sid, 'server_id': server_id, 'cmd': cmd_data}, room=server['sid'])
 
 
@@ -245,5 +280,6 @@ def handle_socket_disconnect():
 
 
 if __name__ == '__main__':
+    threading.Thread(target=_cleanup_sessions, daemon=True).start()
     port = int(os.environ.get('PORT', 5000))
     socketio.run(app, host='0.0.0.0', port=port, debug=False, allow_unsafe_werkzeug=True)

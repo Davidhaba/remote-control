@@ -62,6 +62,59 @@
             flex: 1;
             min-width: 60px;
         }
+
+        .modal-backdrop {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .modal-backdrop.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: #1a1a1a;
+            color: #fff;
+            padding: 20px;
+            border-radius: 14px;
+            width: min(420px, 90%);
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+        }
+
+        .modal-content h2 {
+            margin: 0 0 12px;
+            font-size: 18px;
+        }
+
+        .modal-content label {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 13px;
+            color: #ccc;
+        }
+
+        .modal-content input {
+            width: 100%;
+            padding: 10px 12px;
+            margin-bottom: 14px;
+            border-radius: 10px;
+            border: 1px solid #333;
+            background: #111;
+            color: #fff;
+            box-sizing: border-box;
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            flex-wrap: wrap;
+        }
     </style>
 </head>
 
@@ -242,6 +295,21 @@
         </div>
     </div>
 
+    <div id="passwordModal" class="modal-backdrop" onclick="hidePasswordModal(event)">
+        <div class="modal-content" onclick="event.stopPropagation();">
+            <h2>Enter server password</h2>
+            <div id="modalServerInfo" style="margin-bottom:10px;color:#bbb;font-size:13px;"></div>
+            <form id="passwordForm" onsubmit="submitPasswordModal(event)">
+                <label for="passwordInput">Password</label>
+                <input id="passwordInput" type="password" autocomplete="current-password" placeholder="Server password" required>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-ghost" onclick="cancelPasswordModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Connect</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <script>
         const socket = io();
         let isConnected = false;
@@ -383,32 +451,57 @@
             });
         }
 
-        function connectToServer(address, element, type) {
+        function showPasswordModal(targetAddress, type, element) {
             const statusDiv = document.getElementById('status');
             statusDiv.className = 'status loading';
-            statusDiv.textContent = 'Connecting...';
+            statusDiv.textContent = 'Awaiting password...';
             document.querySelectorAll('.server-item').forEach(el => el.classList.remove('selected'));
             if (element) element.classList.add('selected');
-            selectedServer = address;
+            selectedServer = targetAddress;
             currentDeviceType = type;
+            document.getElementById('modalServerInfo').textContent = `Connecting to ${targetAddress}`;
+            document.getElementById('passwordInput').value = '';
+            document.getElementById('passwordModal').classList.add('active');
+            document.getElementById('passwordInput').focus();
+        }
 
-            const password = window.prompt('Enter password for this server', '');
-            if (password === null) {
-                statusDiv.className = 'status';
-                statusDiv.textContent = 'Cancelled';
-                return;
-            }
-            const trimmedPassword = password.trim();
+        function hidePasswordModal(event) {
+            if (event && event.target !== event.currentTarget) return;
+            document.getElementById('passwordModal').classList.remove('active');
+        }
+
+        function cancelPasswordModal() {
+            hidePasswordModal();
+            const statusDiv = document.getElementById('status');
+            statusDiv.className = 'status';
+            statusDiv.textContent = 'Cancelled';
+            selectedServer = null;
+            currentDeviceType = null;
+        }
+
+        function submitPasswordModal(event) {
+            event.preventDefault();
+            const passwordInput = document.getElementById('passwordInput');
+            const trimmedPassword = passwordInput.value.trim();
             if (!trimmedPassword) {
-                statusDiv.className = 'status';
-                statusDiv.textContent = 'Password is required';
+                passwordInput.focus();
                 return;
             }
+            hidePasswordModal();
+            connectToSelectedServer(trimmedPassword);
+        }
 
+        function connectToSelectedServer(trimmedPassword) {
+            const statusDiv = document.getElementById('status');
+            if (!selectedServer || !currentDeviceType) {
+                statusDiv.className = 'status';
+                statusDiv.textContent = 'No server selected';
+                return;
+            }
             fetch('/api/connect', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ server_id: address, socket_id: socket.id, type: 'desktop', password: trimmedPassword })
+                body: JSON.stringify({ server_id: selectedServer, socket_id: socket.id, type: currentDeviceType, password: trimmedPassword })
             })
                 .then(res => res.json())
                 .then(data => {
@@ -417,7 +510,7 @@
                         statusDiv.textContent = 'Waiting for server...';
                     } else {
                         statusDiv.className = 'status';
-                        statusDiv.textContent = 'Connection failed';
+                        statusDiv.textContent = data.error || 'Connection failed';
                     }
                 })
                 .catch(() => {
@@ -426,46 +519,16 @@
                 });
         }
 
+        function connectToServer(address, element, type) {
+            showPasswordModal(address, type, element);
+        }
+
         function connectToAndroid(deviceId, element) {
-            const statusDiv = document.getElementById('status');
-            statusDiv.className = 'status loading';
-            statusDiv.textContent = 'Connecting...';
             document.querySelectorAll('.server-item').forEach(el => el.classList.remove('selected'));
             if (element) element.classList.add('selected');
+            selectedServer = deviceId;
             currentDeviceType = 'android';
-
-            const password = window.prompt('Enter password for this server', '');
-            if (password === null) {
-                statusDiv.className = 'status';
-                statusDiv.textContent = 'Cancelled';
-                return;
-            }
-            const trimmedPassword = password.trim();
-            if (!trimmedPassword) {
-                statusDiv.className = 'status';
-                statusDiv.textContent = 'Password is required';
-                return;
-            }
-
-            fetch('/api/connect', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ server_id: deviceId, socket_id: socket.id, type: 'android', password: trimmedPassword })
-            })
-                .then(res => res.json())
-                .then(data => {
-                    if (data.status === 'connected') {
-                        statusDiv.className = 'status';
-                        statusDiv.textContent = 'Waiting for server...';
-                    } else {
-                        statusDiv.className = 'status';
-                        statusDiv.textContent = 'Connection failed';
-                    }
-                })
-                .catch(() => {
-                    statusDiv.className = 'status';
-                    statusDiv.textContent = 'Connection error';
-                });
+            showPasswordModal(deviceId, 'android', element);
         }
 
         let screenWidth = 1280, screenHeight = 720;
