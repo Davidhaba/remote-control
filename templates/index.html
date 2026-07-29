@@ -407,9 +407,8 @@
                 .then(res => res.json())
                 .then(data => {
                     if (data.status === 'connected') {
-                        statusDiv.className = 'status connected';
-                        statusDiv.textContent = 'Connected';
-                        showScreenView();
+                        statusDiv.className = 'status';
+                        statusDiv.textContent = 'Waiting for server...';
                     } else {
                         statusDiv.className = 'status';
                         statusDiv.textContent = 'Connection failed';
@@ -444,9 +443,8 @@
                 .then(res => res.json())
                 .then(data => {
                     if (data.status === 'connected') {
-                        statusDiv.className = 'status connected';
-                        statusDiv.textContent = 'Connected';
-                        showScreenView();
+                        statusDiv.className = 'status';
+                        statusDiv.textContent = 'Waiting for server...';
                     } else {
                         statusDiv.className = 'status';
                         statusDiv.textContent = 'Connection failed';
@@ -489,6 +487,28 @@
                 };
                 img.src = 'data:image/jpeg;base64,' + data.frame;
             }
+        });
+
+        socket.on('session_ready', (data) => {
+            try {
+                const statusDiv = document.getElementById('status');
+                if (data && data.server_id && selectedServer && data.server_id === selectedServer) {
+                    statusDiv.className = 'status connected';
+                    statusDiv.textContent = 'Connected';
+                    showScreenView();
+                }
+            } catch (e) { }
+        });
+
+        socket.on('session_denied', (data) => {
+            try {
+                const statusDiv = document.getElementById('status');
+                if (data && data.server_id && selectedServer && data.server_id === selectedServer) {
+                    statusDiv.className = 'status';
+                    statusDiv.textContent = 'Authentication failed';
+                    selectedServer = null;
+                }
+            } catch (e) { }
         });
 
         function updateCursorDisplay() {

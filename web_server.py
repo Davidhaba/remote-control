@@ -162,7 +162,25 @@ def handle_server_frame(data):
         'cursorHotspotY': data.get('cursorHotspotY', 0),
         'cursorFormat': data.get('cursorFormat', 'raw'),
     }
-    socketio.emit('frame', payload, to=browser_sid)
+    socketio.emit('frame', payload, room=browser_sid)
+
+
+@socketio.on('session_ready')
+def handle_session_ready_from_server(data):
+    data = data or {}
+    browser_sid = data.get('browser_sid')
+    if not browser_sid:
+        return
+    socketio.emit('session_ready', {'server_id': data.get('server_id')}, room=browser_sid)
+
+
+@socketio.on('session_denied')
+def handle_session_denied_from_server(data):
+    data = data or {}
+    browser_sid = data.get('browser_sid')
+    if not browser_sid:
+        return
+    socketio.emit('session_denied', {'server_id': data.get('server_id'), 'reason': data.get('reason')}, room=browser_sid)
 
 
 @socketio.on('command')

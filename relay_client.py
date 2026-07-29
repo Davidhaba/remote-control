@@ -9,7 +9,7 @@ import numpy as np
 import pyautogui
 from flask_socketio import SocketIO
 
-SERVER_URL = os.environ.get('RELAY_URL', 'https://your-render-app.onrender.com')
+SERVER_URL = os.environ.get('RELAY_URL', 'https://remote-control-ee7w.onrender.com')
 SERVER_ID = os.environ.get('SERVER_ID', 'default-server')
 SERVER_PASSWORD = os.environ.get('SERVER_PASSWORD', '')
 
