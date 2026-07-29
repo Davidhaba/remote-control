@@ -394,10 +394,17 @@
             selectedServer = address;
             currentDeviceType = type;
 
+            const password = window.prompt('Enter password for this server (leave empty if none)', '');
+            if (password === null) {
+                statusDiv.className = 'status';
+                statusDiv.textContent = 'Cancelled';
+                return;
+            }
+
             fetch('/api/connect', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ address: address, type: 'desktop' })
+                body: JSON.stringify({ address: address, type: 'desktop', password })
             })
                 .then(res => res.json())
                 .then(data => {
@@ -424,10 +431,17 @@
             if (element) element.classList.add('selected');
             currentDeviceType = 'android';
 
+            const password = window.prompt('Enter password for this server (leave empty if none)', '');
+            if (password === null) {
+                statusDiv.className = 'status';
+                statusDiv.textContent = 'Cancelled';
+                return;
+            }
+
             fetch('/api/connect', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ device_id: deviceId, type: 'android' })
+                body: JSON.stringify({ device_id: deviceId, type: 'android', password })
             })
                 .then(res => res.json())
                 .then(data => {

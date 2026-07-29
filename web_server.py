@@ -6,6 +6,7 @@ import time
 import queue
 import subprocess
 import os
+import shutil
 from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO
 
@@ -23,7 +24,7 @@ last_frame_time = 0
 current_latency = 50
 latency_sample_time = 0
 
-def connect_to_remote_server(host, port):
+def connect_to_remote_server(host, port, password=None):
     global remote_server_socket, remote_server_cmd_socket, remote_server_host, remote_server_port, is_connected
     try:
         remote_server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -31,7 +32,17 @@ def connect_to_remote_server(host, port):
         remote_server_host = host
         remote_server_port = port
         is_connected = True
-        cmd_port_msg = remote_server_socket.recv(1024).decode()
+
+        greeting = remote_server_socket.recv(1024).decode('utf-8', errors='ignore').strip()
+        if greeting == 'AUTH_REQUIRED':
+            remote_server_socket.sendall(f"AUTH:{password or ''}\n".encode())
+            auth_reply = remote_server_socket.recv(1024).decode('utf-8', errors='ignore').strip()
+            if auth_reply != 'AUTH_OK':
+                raise PermissionError('Authentication failed')
+            cmd_port_msg = remote_server_socket.recv(1024).decode('utf-8', errors='ignore').strip()
+        else:
+            cmd_port_msg = greeting
+
         if cmd_port_msg.startswith("CMD_PORT:"):
             cmd_port = int(cmd_port_msg.split(":")[1])
             remote_server_cmd_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -247,14 +258,15 @@ def discover_android():
 
 @app.route('/api/connect', methods=['POST'])
 def connect():
-    data = request.json
+    data = request.json or {}
     host_port = data.get('address')
+    password = data.get('password')
     if not host_port:
         return jsonify({"error": "No address provided"}), 400
     try:
         host, port = host_port.rsplit(':', 1)
         port = int(port)
-        if connect_to_remote_server(host, port):
+        if connect_to_remote_server(host, port, password=password):
             return jsonify({"status": "connected"})
         else:
             return jsonify({"error": "Failed to connect"}), 500

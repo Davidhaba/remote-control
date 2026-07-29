@@ -1,3 +1,4 @@
+import argparse
 import socket
 import threading
 import numpy as np
@@ -163,7 +164,20 @@ pyautogui.PAUSE = 0
 FIXED_FRAME_WIDTH = 1280
 FIXED_FRAME_HEIGHT = 720
 
-# Manual quality override (None -> auto)
+parser = argparse.ArgumentParser(description='Remote control server')
+parser.add_argument('--password', default=None, help='Optional password required for client authentication')
+args = parser.parse_args()
+
+if args.password is None:
+    try:
+        entered_password = input('Set a password for remote access (leave empty to disable password): ').strip()
+        server_password = entered_password or None
+    except KeyboardInterrupt:
+        print('\nNo password set.')
+        server_password = None
+else:
+    server_password = args.password
+
 manual_quality = None
 use_manual_quality = False
 
@@ -188,6 +202,32 @@ cursor_cache = {"b64": None, "hx": 0, "hy": 0, "time": 0}
 cursor_lock = threading.Lock()
 cursor_worker_active = False
 
+def authenticate_client(frame_con):
+    global server_password
+    if not server_password:
+        return True
+    try:
+        frame_con.sendall(b"AUTH_REQUIRED\n")
+        auth_data = b""
+        while b"\n" not in auth_data:
+            chunk = frame_con.recv(4096)
+            if not chunk:
+                return False
+            auth_data += chunk
+        received = auth_data.decode('utf-8', errors='ignore').strip()
+        if not received.startswith('AUTH:'):
+            frame_con.sendall(b"AUTH_FAILED\n")
+            return False
+        provided_password = received[5:].strip()
+        if provided_password != server_password:
+            frame_con.sendall(b"AUTH_FAILED\n")
+            return False
+        frame_con.sendall(b"AUTH_OK\n")
+        return True
+    except Exception:
+        return False
+
+
 def handle_client_connection(frame_con, client_address):
     latency = [0]
     clients_commands = []
@@ -197,6 +237,13 @@ def handle_client_connection(frame_con, client_address):
     missing_count = 0
     frame_skip = 0
 
+    if not authenticate_client(frame_con):
+        try:
+            frame_con.close()
+        except Exception:
+            pass
+        return
+
     def accept_command_connections():
         cmd_listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         cmd_listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -204,7 +251,7 @@ def handle_client_connection(frame_con, client_address):
         cmd_listener.listen(5)
         cmd_port = cmd_listener.getsockname()[1]
         try:
-            frame_con.sendall(f"CMD_PORT:{cmd_port}".encode())
+            frame_con.sendall(f"CMD_PORT:{cmd_port}\n".encode())
         except Exception as e:
             print(f"[remote_server_v2] Failed to send CMD_PORT to {client_address}: {e}")
             try:
