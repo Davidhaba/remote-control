@@ -190,6 +190,7 @@ def connect_to_relay():
     try:
         relay_socket.connect(args.relay_url, transports=['websocket'])
         relay_connected = True
+        print(f'[relay] direct_host={get_local_ip()} direct_port={port}')
         relay_socket.emit('register_server', {
             'server_id': args.server_id,
             'name': socket.gethostname(),
@@ -825,15 +826,20 @@ def tcp_server():
     global port
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     local_ip = get_local_ip()
+    try:
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    except Exception:
+        pass
     while True:
         try:
-            server.bind((local_ip, port))
+            server.bind((local_ip, 0))
+            port = server.getsockname()[1]
             break
-        except OSError as e:
-            if e.errno == 10048:
-                port += 1
-            else:
-                raise
+        except OSError:
+            time.sleep(0.1)
+        except Exception:
+            port_ready.set()
+            return
     server.listen(5)
     port_ready.set()
     while True:
@@ -882,7 +888,7 @@ relay_frame_thread = threading.Thread(target=relay_frame_sender, daemon=True)
 relay_transmitter_thread = threading.Thread(target=relay_frame_transmitter, daemon=True)
 cursor_thread.start()
 tcp_thread.start()
-port_ready.wait(timeout=5)
+port_ready.wait()
 udp_thread.start()
 relay_frame_thread.start()
 relay_transmitter_thread.start()

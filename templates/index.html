@@ -210,6 +210,7 @@
         let ctx = null;
         let directSocket = null;
         let directStreamConnected = false;
+        let directOpened = false;
         let pendingDirectHost = null;
         let pendingDirectPort = null;
         let pendingDirectPassword = null;
@@ -450,6 +451,7 @@
 
             directSocket.onopen = () => {
                 directStreamConnected = true;
+                directOpened = true;
                 const statusDiv = document.getElementById('status');
                 if (statusDiv) {
                     statusDiv.className = 'status connected';
@@ -513,7 +515,7 @@
                     statusDiv.className = 'status';
                     statusDiv.textContent = 'Direct stream closed';
                 }
-                if (isConnected) {
+                if (isConnected && directOpened) {
                     disconnectAndBack();
                 }
             };
