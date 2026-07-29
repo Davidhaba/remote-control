@@ -579,11 +579,17 @@ def udp_broadcast_listener():
     broadcast_listener = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     broadcast_listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     broadcast_listener.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-    broadcast_listener.bind(("", 45))
+    try:
+        broadcast_listener.bind(("0.0.0.0", 45))
+    except OSError:
+        try:
+            broadcast_listener.bind(("", 45))
+        except Exception:
+            return
     while True:
         try:
             data, addr = broadcast_listener.recvfrom(1024)
-            if data.decode() == "DISCOVER_SERVER":
+            if data.decode(errors='ignore').strip() == "DISCOVER_SERVER":
                 response = f"{get_local_ip()}:{port}"
                 broadcast_listener.sendto(response.encode(), addr)
         except Exception:

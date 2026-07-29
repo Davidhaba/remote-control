@@ -7,6 +7,7 @@ import queue
 import subprocess
 import os
 import shutil
+import ipaddress
 from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO
 
@@ -184,30 +185,70 @@ def disconnect_remote_server():
 def index():
     return render_template('index.html')
 
+def _probe_discovery_targets():
+    targets = ["127.0.0.1", "255.255.255.255", "<broadcast>"]
+    try:
+        hostname = socket.gethostname()
+        for ip in socket.gethostbyname_ex(hostname)[2]:
+            if not ip or ip.startswith('127.'):
+                continue
+            try:
+                ip_obj = ipaddress.ip_address(ip)
+            except ValueError:
+                continue
+            if ip_obj.version != 4:
+                continue
+            targets.append(ip)
+            try:
+                network = ipaddress.ip_network(f"{ip}/24", strict=False)
+                targets.append(str(network.broadcast_address))
+            except ValueError:
+                pass
+    except Exception:
+        pass
+    seen = set()
+    clean_targets = []
+    for target in targets:
+        if target not in seen:
+            seen.add(target)
+            clean_targets.append(target)
+    return clean_targets
+
 @app.route('/api/discover-servers', methods=['GET'])
 def discover_servers():
     try:
         import socket as socket_module
-        client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        client.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        client.settimeout(2)
-        message = "DISCOVER_SERVER".encode()
-        client.sendto(message, ('<broadcast>', 45))
+        message = b"DISCOVER_SERVER"
         servers = []
-        try:
-            while True:
-                data, server_address = client.recvfrom(1024)
-                server_info = data.decode().strip()
-                host_part = server_info.split(':', 1)[0] if ':' in server_info else server_info
+        seen_addresses = set()
+        targets = _probe_discovery_targets()
+
+        for target in targets:
+            try:
+                client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                client.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                client.settimeout(0.4)
+                client.sendto(message, (target, 45))
                 try:
-                    hostname = socket_module.gethostbyaddr(host_part)[0]
-                except Exception:
-                    hostname = host_part
-                servers.append({"address": server_info, "ip": host_part, "hostname": hostname})
-        except socket.timeout:
-            pass
-        finally:
-            client.close()
+                    while True:
+                        data, _ = client.recvfrom(1024)
+                        server_info = data.decode(errors='ignore').strip()
+                        if not server_info or server_info in seen_addresses:
+                            continue
+                        seen_addresses.add(server_info)
+                        host_part = server_info.split(':', 1)[0] if ':' in server_info else server_info
+                        try:
+                            hostname = socket_module.gethostbyaddr(host_part)[0]
+                        except Exception:
+                            hostname = host_part
+                        servers.append({"address": server_info, "ip": host_part, "hostname": hostname})
+                except socket.timeout:
+                    pass
+                finally:
+                    client.close()
+            except Exception:
+                continue
+
         return jsonify({"servers": servers})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
