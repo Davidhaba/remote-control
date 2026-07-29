@@ -10,7 +10,12 @@ from flask_socketio import SocketIO
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'your-secret-key'
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
+try:
+    import eventlet
+    async_mode = 'eventlet'
+except Exception:
+    async_mode = 'threading'
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode=async_mode)
 
 registered_servers = {}
 browser_sessions = {}

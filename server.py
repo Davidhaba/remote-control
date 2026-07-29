@@ -11,7 +11,7 @@ import sys
 import ctypes
 import uuid
 from ctypes import wintypes
-from flask_socketio import SocketIO
+import socketio
 try:
     import pyautogui
 except Exception:
@@ -177,14 +177,14 @@ if not args.server_id:
     host_name = socket.gethostname().replace(' ', '-').lower()
     args.server_id = f"{host_name}-{uuid.uuid4().hex[:8]}"
 
-relay_socket = SocketIO(logger=False, engineio_logger=False, cors_allowed_origins='*')
+relay_socket = socketio.Client()
 relay_connected = False
 
 
 def connect_to_relay():
     global relay_socket, relay_connected
     try:
-        relay_socket.connect(args.relay_url, transports=['websocket'], namespaces=['/'])
+        relay_socket.connect(args.relay_url, transports=['websocket'])
         relay_connected = True
         relay_socket.emit('register_server', {
             'server_id': args.server_id,
@@ -208,12 +208,25 @@ def relay_heartbeat():
         time.sleep(5)
 
 
+@relay_socket.event
+def on_connect():
+    global relay_connected
+    relay_connected = True
+    relay_socket.emit('register_server', {
+        'server_id': args.server_id,
+        'name': socket.gethostname(),
+        'hostname': socket.gethostname(),
+        'address': args.server_id,
+        'password_protected': bool(server_password),
+    })
+
+
 @relay_socket.on('request_session')
 def on_request_session(data):
     data = data or {}
     browser_sid = data.get('browser_sid')
     if browser_sid:
-        relay_socket.emit('session_ready', {'browser_sid': browser_sid, 'server_id': args.server_id}, to=browser_sid)
+        relay_socket.emit('session_ready', {'browser_sid': browser_sid, 'server_id': args.server_id})
 
 
 @relay_socket.on('relay_command')
