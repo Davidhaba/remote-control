@@ -41,6 +41,8 @@ def _server_snapshot(server_id, server_info):
         'hostname': server_info.get('hostname', server_id),
         'last_seen': server_info.get('last_seen', 0),
         'address': server_info.get('address', server_id),
+        'direct_host': server_info.get('direct_host'),
+        'direct_port': server_info.get('direct_port'),
     }
 
 
@@ -96,7 +98,12 @@ def connect():
         'password': password,
         'type': data.get('type', 'desktop'),
     }, room=server['sid'])
-    return jsonify({'status': 'connected'})
+
+    response = {'status': 'connected'}
+    if server.get('direct_host') and server.get('direct_port'):
+        response['direct_host'] = server['direct_host']
+        response['direct_port'] = server['direct_port']
+    return jsonify(response)
 
 
 @app.route('/api/disconnect', methods=['POST'])
@@ -167,6 +174,8 @@ def handle_register_server(data):
         'name': data.get('name', server_id),
         'hostname': data.get('hostname', socket.gethostname()),
         'address': data.get('address', server_id),
+        'direct_host': data.get('direct_host'),
+        'direct_port': data.get('direct_port'),
         'status': 'online',
         'last_seen': time.time(),
         'password_protected': True,
@@ -187,6 +196,7 @@ def handle_server_frame(data):
     if not browser_sid:
         return
     payload = {
+        'frame_id': data.get('frame_id'),
         'frame': data.get('frame'),
         'cursorImage': data.get('cursorImage'),
         'cursorHotspotX': data.get('cursorHotspotX', 0),

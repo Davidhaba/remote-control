@@ -208,6 +208,11 @@
         let currentDeviceType = null;
         let canvas = null;
         let ctx = null;
+        let directSocket = null;
+        let directStreamConnected = false;
+        let pendingDirectHost = null;
+        let pendingDirectPort = null;
+        let pendingDirectPassword = null;
 
         let lastMouseX = 0, lastMouseY = 0;
         let isMouseDown = false;
@@ -397,8 +402,16 @@
                 .then(res => res.json())
                 .then(data => {
                     if (data.status === 'connected') {
-                        statusDiv.className = 'status';
-                        statusDiv.textContent = 'Waiting for server...';
+                        if (data.direct_host && data.direct_port) {
+                            pendingDirectHost = data.direct_host;
+                            pendingDirectPort = data.direct_port;
+                            pendingDirectPassword = trimmedPassword;
+                            statusDiv.className = 'status';
+                            statusDiv.textContent = 'Waiting for server authorization...';
+                        } else {
+                            statusDiv.className = 'status';
+                            statusDiv.textContent = 'Waiting for server...';
+                        }
                     } else {
                         statusDiv.className = 'status';
                         statusDiv.textContent = data.error || 'Connection failed';
@@ -422,11 +435,61 @@
             showPasswordModal(deviceId, 'android', element);
         }
 
-        let screenWidth = 1280, screenHeight = 720;
-        let lastCursorImgSrc = '';
+        function connectDirectly(host, port, password) {
+            if (directSocket) {
+                try {
+                    directSocket.close();
+                } catch (e) { }
+            }
 
-        socket.on('frame', (data) => {
-            if (canvas && ctx && data.frame) {
+            const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
+            const wsUrl = `${wsProto}://${host}:${port}/ws?password=${encodeURIComponent(password)}`;
+            directSocket = new WebSocket(wsUrl);
+
+            directSocket.binaryType = 'arraybuffer';
+
+            directSocket.onopen = () => {
+                directStreamConnected = true;
+                const statusDiv = document.getElementById('status');
+                if (statusDiv) {
+                    statusDiv.className = 'status connected';
+                    statusDiv.textContent = 'Connected directly';
+                }
+                showScreenView();
+            };
+
+            directSocket.onmessage = (event) => {
+                if (!event.data) {
+                    return;
+                }
+                if (typeof event.data === 'string') {
+                    try {
+                        const payload = JSON.parse(event.data);
+                        if (payload && payload.type === 'cursor') {
+                            if (payload.cursorRemoved) {
+                                remoteCursorImg.style.display = 'none';
+                                cursorImageAvailable = false;
+                            } else if (payload.cursorImage && currentDeviceType !== 'android') {
+                                const src = 'data:image/png;base64,' + payload.cursorImage;
+                                if (src !== lastCursorImgSrc) {
+                                    remoteCursorImg.src = src;
+                                    lastCursorImgSrc = src;
+                                    cursorHotspotX = payload.cursorHotspotX || 0;
+                                    cursorHotspotY = payload.cursorHotspotY || 0;
+                                    cursorImageAvailable = true;
+                                }
+                                remoteCursorImg.style.display = 'block';
+                            }
+                            updateCursorDisplay();
+                        }
+                    } catch (err) {
+                        console.warn('WebSocket JSON parse failed', err);
+                    }
+                    return;
+                }
+
+                const arrayBuffer = event.data;
+                const blob = new Blob([arrayBuffer], { type: 'image/jpeg' });
                 const img = new Image();
                 img.onload = () => {
                     screenWidth = img.width;
@@ -434,24 +497,79 @@
                     canvas.width = img.width;
                     canvas.height = img.height;
                     ctx.drawImage(img, 0, 0);
-
-                    if (data.cursorImage && currentDeviceType !== 'android') {
-                        const src = 'data:image/png;base64,' + data.cursorImage;
-                        if (src !== lastCursorImgSrc) {
-                            remoteCursorImg.src = src;
-                            lastCursorImgSrc = src;
-                            cursorHotspotX = data.cursorHotspotX || 0;
-                            cursorHotspotY = data.cursorHotspotY || 0;
-                            cursorImageAvailable = true;
-                        }
-                        remoteCursorImg.style.display = 'block';
-                    } else if (data.cursorRemoved) {
-                        remoteCursorImg.style.display = 'none';
-                        cursorImageAvailable = false;
-                    }
                     updateCursorDisplay();
                 };
-                img.src = 'data:image/jpeg;base64,' + data.frame;
+                img.src = URL.createObjectURL(blob);
+            };
+
+            directSocket.onclose = () => {
+                directStreamConnected = false;
+                if (directSocket) {
+                    try { directSocket.onopen = null; directSocket.onmessage = null; directSocket.onclose = null; directSocket.onerror = null; } catch (e) { }
+                    directSocket = null;
+                }
+                const statusDiv = document.getElementById('status');
+                if (statusDiv) {
+                    statusDiv.className = 'status';
+                    statusDiv.textContent = 'Direct stream closed';
+                }
+                if (isConnected) {
+                    disconnectAndBack();
+                }
+            };
+
+            directSocket.onerror = () => {
+                const statusDiv = document.getElementById('status');
+                if (statusDiv) {
+                    statusDiv.className = 'status';
+                    statusDiv.textContent = 'Direct connection error';
+                }
+            };
+        }
+
+        let screenWidth = 1280, screenHeight = 720;
+        let lastCursorImgSrc = '';
+        let lastFrameId = 0;
+
+        socket.on('frame', (data) => {
+            try {
+                const frameId = Number(data.frame_id || 0);
+                if (!Number.isNaN(frameId) && frameId <= lastFrameId) {
+                    return;
+                }
+                if (frameId > lastFrameId) {
+                    lastFrameId = frameId;
+                }
+
+                if (canvas && ctx && data.frame) {
+                    const img = new Image();
+                    img.onload = () => {
+                        screenWidth = img.width;
+                        screenHeight = img.height;
+                        canvas.width = img.width;
+                        canvas.height = img.height;
+                        ctx.drawImage(img, 0, 0);
+
+                        if (data.cursorImage && currentDeviceType !== 'android') {
+                            const src = 'data:image/png;base64,' + data.cursorImage;
+                            if (src !== lastCursorImgSrc) {
+                                remoteCursorImg.src = src;
+                                lastCursorImgSrc = src;
+                                cursorHotspotX = data.cursorHotspotX || 0;
+                                cursorHotspotY = data.cursorHotspotY || 0;
+                                cursorImageAvailable = true;
+                            }
+                            remoteCursorImg.style.display = 'block';
+                        } else if (data.cursorRemoved) {
+                            remoteCursorImg.style.display = 'none';
+                            cursorImageAvailable = false;
+                        }
+                        updateCursorDisplay();
+                    };
+                    img.src = 'data:image/jpeg;base64,' + data.frame;
+                }
+            } catch (err) {
+                console.warn('Frame handler error:', err);
             }
         });
 
@@ -459,6 +577,15 @@
             try {
                 const statusDiv = document.getElementById('status');
                 if (data && data.server_id && selectedServer && data.server_id === selectedServer) {
+                    if (pendingDirectHost && pendingDirectPort && pendingDirectPassword) {
+                        statusDiv.className = 'status';
+                        statusDiv.textContent = 'Connecting directly...';
+                        connectDirectly(pendingDirectHost, pendingDirectPort, pendingDirectPassword);
+                        pendingDirectHost = null;
+                        pendingDirectPort = null;
+                        pendingDirectPassword = null;
+                        return;
+                    }
                     statusDiv.className = 'status connected';
                     statusDiv.textContent = 'Connected';
                     showScreenView();
@@ -647,7 +774,19 @@
             sendCommand({ type: 'key', key_code: key_code });
         }
 
-        function sendCommand(cmd) { if (isConnected) { socket.emit('command', { cmd }); } }
+        function sendCommand(cmd) {
+            if (directStreamConnected && directSocket && directSocket.readyState === WebSocket.OPEN) {
+                try {
+                    directSocket.send(JSON.stringify(cmd));
+                    return;
+                } catch (e) {
+                    console.warn('Direct socket send failed', e);
+                }
+            }
+            if (isConnected) {
+                socket.emit('command', { cmd });
+            }
+        }
 
         function onQualitySliderChange(e) {
             const v = parseInt(e.target.value, 10);
@@ -698,6 +837,11 @@
         }
 
         function disconnectAndBack() {
+            if (directSocket) {
+                try { directSocket.close(); } catch (e) { }
+                directSocket = null;
+            }
+            directStreamConnected = false;
             try {
                 fetch('/api/disconnect', { method: 'POST' }).catch(() => { });
                 try { socket.emit('command', { cmd: { type: 'disconnect_request' } }); } catch (e) { }

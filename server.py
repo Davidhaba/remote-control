@@ -10,6 +10,8 @@ import io
 import sys
 import ctypes
 import uuid
+import hashlib
+from urllib.parse import urlparse, parse_qs
 from ctypes import wintypes
 import socketio
 try:
@@ -193,6 +195,8 @@ def connect_to_relay():
             'name': socket.gethostname(),
             'hostname': socket.gethostname(),
             'address': args.server_id,
+            'direct_host': get_local_ip(),
+            'direct_port': port,
             'password_protected': bool(server_password),
         })
         threading.Thread(target=relay_heartbeat, daemon=True).start()
@@ -210,7 +214,13 @@ def relay_heartbeat():
         time.sleep(5)
 
 
+frame_seq = 0
+latest_payload = None
+payload_lock = threading.Lock()
+
+
 def relay_frame_sender():
+    global frame_seq, latest_payload
     while True:
         try:
             if not relay_connected or not authorized_browsers:
@@ -242,18 +252,47 @@ def relay_frame_sender():
                 hotspot_y = cursor_cache.get('hy', 0)
                 cursor_fmt = cursor_cache.get('fmt', 'png')
 
-            for browser_sid in list(authorized_browsers.keys()):
-                relay_socket.emit('server_frame', {
-                    'browser_sid': browser_sid,
-                    'frame': encoded_frame,
-                    'cursorImage': cursor_b64,
-                    'cursorHotspotX': hotspot_x,
-                    'cursorHotspotY': hotspot_y,
-                    'cursorFormat': cursor_fmt,
-                })
+            frame_seq += 1
+            payload = {
+                'browser_sid': None,
+                'frame_id': frame_seq,
+                'frame': encoded_frame,
+                'cursorImage': cursor_b64,
+                'cursorHotspotX': hotspot_x,
+                'cursorHotspotY': hotspot_y,
+                'cursorFormat': cursor_fmt,
+            }
+
+            with payload_lock:
+                latest_payload = payload
         except Exception:
             pass
         time.sleep(0.1)
+
+
+def relay_frame_transmitter():
+    global latest_payload
+    while True:
+        try:
+            if not relay_connected or not authorized_browsers:
+                time.sleep(0.25)
+                continue
+
+            with payload_lock:
+                payload = latest_payload
+                latest_payload = None
+
+            if not payload:
+                time.sleep(0.05)
+                continue
+
+            for browser_sid in list(authorized_browsers.keys()):
+                frame_payload = payload.copy()
+                frame_payload['browser_sid'] = browser_sid
+                relay_socket.emit('server_frame', frame_payload)
+        except Exception:
+            pass
+        time.sleep(0.05)
 
 
 def _cleanup_authorized_browsers():
@@ -377,201 +416,255 @@ cursor_cache = {"b64": None, "hx": 0, "hy": 0, "time": 0}
 cursor_lock = threading.Lock()
 cursor_worker_active = False
 
-def authenticate_client(frame_con):
-    global server_password
-    if not server_password:
-        return True
+def _recv_exact(sock, size):
+    data = b''
+    while len(data) < size:
+        chunk = sock.recv(size - len(data))
+        if not chunk:
+            return None
+        data += chunk
+    return data
+
+
+def _read_http_request(sock):
+    data = b''
+    while b'\r\n\r\n' not in data:
+        chunk = sock.recv(4096)
+        if not chunk:
+            return None
+        data += chunk
+    headers, _sep, _rest = data.partition(b'\r\n\r\n')
     try:
-        frame_con.sendall(b"AUTH_REQUIRED\n")
-        auth_data = b""
-        while b"\n" not in auth_data:
-            chunk = frame_con.recv(4096)
-            if not chunk:
-                return False
-            auth_data += chunk
-        received = auth_data.decode('utf-8', errors='ignore').strip()
-        if not received.startswith('AUTH:'):
-            frame_con.sendall(b"AUTH_FAILED\n")
-            return False
-        provided_password = received[5:].strip()
-        if provided_password != server_password:
-            frame_con.sendall(b"AUTH_FAILED\n")
-            return False
-        frame_con.sendall(b"AUTH_OK\n")
-        return True
+        text = headers.decode('utf-8', errors='ignore')
     except Exception:
+        return None
+    lines = text.split('\r\n')
+    if not lines:
+        return None
+    request_line = lines[0].split()
+    if len(request_line) < 3:
+        return None
+    method, path = request_line[0], request_line[1]
+    header_lines = lines[1:]
+    headers = {}
+    for line in header_lines:
+        if ':' in line:
+            name, value = line.split(':', 1)
+            headers[name.strip().lower()] = value.strip()
+    return method, path, headers
+
+
+def _send_http_response(sock, status_code, reason, headers=None, body=b''):
+    if headers is None:
+        headers = {}
+    headers = {k.lower(): v for k, v in headers.items()}
+    response_lines = [f'HTTP/1.1 {status_code} {reason}']
+    response_lines.append('Connection: close')
+    for name, value in headers.items():
+        response_lines.append(f'{name}: {value}')
+    response_lines.append(f'Content-Length: {len(body)}')
+    response_lines.append('')
+    response_lines.append('')
+    response = '\r\n'.join(response_lines).encode('utf-8') + body
+    sock.sendall(response)
+
+
+def _send_ws_message(sock, data, opcode=2):
+    if isinstance(data, str):
+        payload = data.encode('utf-8')
+    else:
+        payload = data
+    header = bytearray()
+    fin_and_opcode = 0x80 | (opcode & 0x0f)
+    header.append(fin_and_opcode)
+    length = len(payload)
+    if length <= 125:
+        header.append(length)
+    elif length < 65536:
+        header.append(126)
+        header.extend(length.to_bytes(2, 'big'))
+    else:
+        header.append(127)
+        header.extend(length.to_bytes(8, 'big'))
+    sock.sendall(bytes(header) + payload)
+
+
+def _recv_ws_frame(sock):
+    header = _recv_exact(sock, 2)
+    if not header:
+        return None, None
+    b1, b2 = header
+    opcode = b1 & 0x0f
+    masked = bool(b2 & 0x80)
+    length = b2 & 0x7f
+    if length == 126:
+        ext = _recv_exact(sock, 2)
+        if not ext:
+            return None, None
+        length = int.from_bytes(ext, 'big')
+    elif length == 127:
+        ext = _recv_exact(sock, 8)
+        if not ext:
+            return None, None
+        length = int.from_bytes(ext, 'big')
+    mask_key = _recv_exact(sock, 4) if masked else None
+    if mask_key is None and masked:
+        return None, None
+    payload = _recv_exact(sock, length) if length else b''
+    if payload is None:
+        return None, None
+    if masked and mask_key:
+        payload = bytes(b ^ mask_key[i % 4] for i, b in enumerate(payload))
+    return opcode, payload
+
+
+def _perform_websocket_handshake(frame_con):
+    request = _read_http_request(frame_con)
+    if not request:
         return False
+    method, path, headers = request
+    if method != 'GET' or headers.get('upgrade', '').lower() != 'websocket' or 'sec-websocket-key' not in headers:
+        _send_http_response(frame_con, 400, 'Bad Request')
+        return False
+    parsed = urlparse(path)
+    if parsed.path != '/ws':
+        _send_http_response(frame_con, 404, 'Not Found')
+        return False
+    query = parse_qs(parsed.query)
+    provided_password = query.get('password', [None])[0]
+    if server_password and provided_password != server_password:
+        _send_http_response(frame_con, 401, 'Unauthorized')
+        return False
+    key = headers['sec-websocket-key'].strip()
+    accept_raw = hashlib.sha1((key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode('utf-8')).digest()
+    accept = base64.b64encode(accept_raw).decode('ascii')
+    response_headers = {
+        'Upgrade': 'websocket',
+        'Connection': 'Upgrade',
+        'Sec-WebSocket-Accept': accept,
+    }
+    response_lines = ['HTTP/1.1 101 Switching Protocols']
+    for h, v in response_headers.items():
+        response_lines.append(f'{h}: {v}')
+    response_lines.append('')
+    response_lines.append('')
+    frame_con.sendall('\r\n'.join(response_lines).encode('utf-8'))
+    return True
 
 
 def handle_client_connection(frame_con, client_address):
-    latency = [0]
-    clients_commands = []
-    last_cursor_b64 = None
-    last_hotspot_x = None
-    last_hotspot_y = None
-    missing_count = 0
-    frame_skip = 0
-
-    if not authenticate_client(frame_con):
+    if not _perform_websocket_handshake(frame_con):
         try:
             frame_con.close()
         except Exception:
             pass
         return
 
-    def accept_command_connections():
-        cmd_listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        cmd_listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        cmd_listener.bind((client_address[0], 0))
-        cmd_listener.listen(5)
-        cmd_port = cmd_listener.getsockname()[1]
-        try:
-            frame_con.sendall(f"CMD_PORT:{cmd_port}\n".encode())
-        except Exception as e:
-            print(f"[remote_server_v2] Failed to send CMD_PORT to {client_address}: {e}")
-            try:
-                cmd_listener.close()
-            except Exception:
-                pass
-            return
-        while True:
-            try:
-                cmd_con, cmd_addr = cmd_listener.accept()
-            except Exception:
+    active = {'running': True}
+    last_cursor_b64 = None
+    last_hotspot_x = None
+    last_hotspot_y = None
+    missing_count = 0
+
+    def command_reader():
+        while active['running']:
+            opcode, payload = _recv_ws_frame(frame_con)
+            if opcode is None:
                 break
-            print(f"[remote_server_v2] accepted command connection from {cmd_addr}")
-            clients_commands.append(cmd_con)
+            if opcode == 8:
+                break
+            if opcode == 9:
+                try:
+                    _send_ws_message(frame_con, payload or b'', opcode=10)
+                except Exception:
+                    break
+                continue
+            if opcode == 1:
+                try:
+                    message = payload.decode('utf-8', errors='ignore')
+                    data = json.loads(message)
+                    if isinstance(data, dict):
+                        execute_command(data)
+                except Exception:
+                    pass
+                continue
+        active['running'] = False
+        try:
+            frame_con.close()
+        except Exception:
+            pass
 
-            def read_from_cmd_con(con):
-                buffer = ""
-                while True:
-                    try:
-                        data = con.recv(4096).decode()
-                        if not data:
-                            break
-                        buffer += data
-                        while '\n' in buffer:
-                            line, buffer = buffer.split('\n', 1)
-                            line = line.strip()
-                            if not line:
-                                continue
-                            if line == "DISCONNECT":
-                                try:
-                                    con.close()
-                                except Exception:
-                                    pass
-                                return
-                            if line.startswith("LATENCY:"):
-                                try:
-                                    latency[0] = int(line.split(":", 1)[1].strip())
-                                except Exception:
-                                    pass
-                                continue
-                            if line.startswith("CMD:"):
-                                try:
-                                    cmd_data = json.loads(line[4:])
-                                    execute_command(cmd_data)
-                                except Exception:
-                                    pass
-                    except Exception:
-                        try:
-                            con.close()
-                        except Exception:
-                            pass
-                        break
+    threading.Thread(target=command_reader, daemon=True).start()
 
-            threading.Thread(target=read_from_cmd_con, args=(cmd_con,), daemon=True).start()
-
-    threading.Thread(target=accept_command_connections, daemon=True).start()
-
-    while True:
+    while active['running']:
         try:
             frame = capture_screen_dxgi()
+            if frame is None:
+                time.sleep(0.025)
+                continue
 
-            # select quality: manual override or latency-based
             if use_manual_quality and manual_quality is not None:
                 try:
                     quality = int(manual_quality)
                 except Exception:
                     quality = 85
             else:
-                if latency[0] > 2000:
-                    quality = 5
-                elif latency[0] > 1000:
-                    quality = 10
-                elif latency[0] > 500:
-                    quality = 20
-                elif latency[0] > 300:
-                    quality = 35
-                elif latency[0] > 150:
-                    quality = 50
-                elif latency[0] > 80:
-                    quality = 70
-                else:
-                    quality = 85
+                quality = 85
 
-            # Always resize to fixed frame dimensions to keep client canvas size stable
             target_w, target_h = FIXED_FRAME_WIDTH, FIXED_FRAME_HEIGHT
             orig_h, orig_w = frame.shape[:2]
-            # compute integer new size with preserved aspect via scaling, then pad/crop to exact target
             scale = min(float(target_w) / orig_w, float(target_h) / orig_h)
             scaled_w = max(1, int(orig_w * scale))
             scaled_h = max(1, int(orig_h * scale))
-            # resize to scaled size first
             if scaled_w != orig_w or scaled_h != orig_h:
                 interp = cv2.INTER_LINEAR if scale >= 1.0 else cv2.INTER_AREA
                 frame = cv2.resize(frame, (scaled_w, scaled_h), interpolation=interp)
-            # create a target canvas and center the scaled frame (letterbox/pillarbox) if needed
             if scaled_w != target_w or scaled_h != target_h:
                 canvas_frame = np.zeros((target_h, target_w, 3), dtype=frame.dtype)
                 x_off = (target_w - scaled_w) // 2
                 y_off = (target_h - scaled_h) // 2
                 canvas_frame[y_off:y_off+scaled_h, x_off:x_off+scaled_w] = frame
                 frame = canvas_frame
-            
+
             _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
+            _send_ws_message(frame_con, buffer, opcode=2)
 
-            size = len(buffer)
-            
-            frame_con.sendall(size.to_bytes(4, 'big'))
-            frame_con.sendall(buffer)
-            
             with cursor_lock:
-                cursor_b64 = cursor_cache["b64"]
-                hotspot_x = cursor_cache["hx"]
-                hotspot_y = cursor_cache["hy"]
-                cursor_fmt = cursor_cache.get("fmt", "raw")
-            
-            try:
-                meta = {}
-                if cursor_b64 is not None:
-                    missing_count = 0
-                    if cursor_b64 != last_cursor_b64 or hotspot_x != last_hotspot_x or hotspot_y != last_hotspot_y:
-                        meta = {'cursorImage': cursor_b64, 'cursorHotspotX': hotspot_x, 'cursorHotspotY': hotspot_y, 'cursorFormat': cursor_fmt}
-                        last_cursor_b64 = cursor_b64
-                        last_hotspot_x = hotspot_x
-                        last_hotspot_y = hotspot_y
-                else:
-                    missing_count += 1
-                    if missing_count >= 3 and last_cursor_b64 is not None:
-                        meta = { }
-                        last_cursor_b64 = None
-                        last_hotspot_x = None
-                        last_hotspot_y = None
+                cursor_b64 = cursor_cache['b64']
+                hotspot_x = cursor_cache['hx']
+                hotspot_y = cursor_cache['hy']
+                cursor_fmt = cursor_cache.get('fmt', 'raw')
 
-                meta_bytes = json.dumps(meta).encode('utf-8')
-                meta_size = len(meta_bytes)
-                frame_con.sendall(meta_size.to_bytes(4, 'big'))
-                frame_con.sendall(meta_bytes)
-            except Exception:
-                pass
+            if cursor_b64 is not None:
+                if cursor_b64 != last_cursor_b64 or hotspot_x != last_hotspot_x or hotspot_y != last_hotspot_y:
+                    cursor_payload = json.dumps({
+                        'type': 'cursor',
+                        'cursorImage': cursor_b64,
+                        'cursorHotspotX': hotspot_x,
+                        'cursorHotspotY': hotspot_y,
+                        'cursorFormat': cursor_fmt,
+                    })
+                    _send_ws_message(frame_con, cursor_payload, opcode=1)
+                    last_cursor_b64 = cursor_b64
+                    last_hotspot_x = hotspot_x
+                    last_hotspot_y = hotspot_y
+            else:
+                if last_cursor_b64 is not None:
+                    cursor_payload = json.dumps({'type': 'cursor', 'cursorRemoved': True})
+                    _send_ws_message(frame_con, cursor_payload, opcode=1)
+                    last_cursor_b64 = None
+                    last_hotspot_x = None
+                    last_hotspot_y = None
 
+            time.sleep(0.02)
         except Exception:
-            try:
-                frame_con.close()
-            except Exception:
-                pass
+            active['running'] = False
             break
+
+    try:
+        frame_con.close()
+    except Exception:
+        pass
 
 def capture_cursor_worker():
     global cursor_cache, cursor_lock
@@ -742,6 +835,7 @@ def tcp_server():
             else:
                 raise
     server.listen(5)
+    port_ready.set()
     while True:
         try:
             con, address = server.accept()
@@ -780,14 +874,18 @@ def get_local_ip():
     return local_ip
 
 port = 1
+port_ready = threading.Event()
 cursor_thread = threading.Thread(target=capture_cursor_worker, daemon=True)
 tcp_thread = threading.Thread(target=tcp_server, daemon=True)
 udp_thread = threading.Thread(target=udp_broadcast_listener, daemon=True)
 relay_frame_thread = threading.Thread(target=relay_frame_sender, daemon=True)
+relay_transmitter_thread = threading.Thread(target=relay_frame_transmitter, daemon=True)
 cursor_thread.start()
 tcp_thread.start()
+port_ready.wait(timeout=5)
 udp_thread.start()
 relay_frame_thread.start()
+relay_transmitter_thread.start()
 connect_to_relay()
 try:
     threading.Thread(target=_cleanup_authorized_browsers, daemon=True).start()
