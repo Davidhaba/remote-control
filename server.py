@@ -179,6 +179,8 @@ if not args.server_id:
 
 relay_socket = socketio.Client(logger=False, engineio_logger=False)
 relay_connected = False
+authorized_browsers = {}
+AUTH_TIMEOUT = 60 * 30
 
 
 def connect_to_relay():
@@ -208,6 +210,18 @@ def relay_heartbeat():
         time.sleep(5)
 
 
+def _cleanup_authorized_browsers():
+    while True:
+        try:
+            now = time.time()
+            for sid, exp in list(authorized_browsers.items()):
+                if exp <= now:
+                    del authorized_browsers[sid]
+        except Exception:
+            pass
+        time.sleep(30)
+
+
 @relay_socket.on('request_session')
 def on_request_session(data):
     data = data or {}
@@ -224,6 +238,10 @@ def on_request_session(data):
             return
 
     if browser_sid:
+        try:
+            authorized_browsers[browser_sid] = time.time() + AUTH_TIMEOUT
+        except Exception:
+            pass
         relay_socket.emit('session_ready', {'browser_sid': browser_sid, 'server_id': args.server_id})
 
 
@@ -231,6 +249,27 @@ def on_request_session(data):
 def on_relay_command(data):
     data = data or {}
     cmd = data.get('cmd')
+    browser_sid = data.get('browser_sid')
+    is_auth = False
+    if browser_sid:
+        exp = authorized_browsers.get(browser_sid)
+        if exp and exp > time.time():
+            is_auth = True
+        else:
+            # cleanup if expired
+            authorized_browsers.pop(browser_sid, None)
+
+    if not is_auth:
+        try:
+            relay_socket.emit('session_denied', {
+                'browser_sid': browser_sid,
+                'server_id': args.server_id,
+                'reason': 'not_authorized'
+            })
+        except Exception:
+            pass
+        return
+
     if cmd:
         execute_command(cmd)
 
@@ -679,6 +718,10 @@ cursor_thread.start()
 tcp_thread.start()
 udp_thread.start()
 connect_to_relay()
+try:
+    threading.Thread(target=_cleanup_authorized_browsers, daemon=True).start()
+except Exception:
+    pass
 try:
     tcp_thread.join()
     udp_thread.join()

@@ -171,6 +171,11 @@ def handle_session_ready_from_server(data):
     browser_sid = data.get('browser_sid')
     if not browser_sid:
         return
+    try:
+        if browser_sid in browser_sessions:
+            browser_sessions[browser_sid]['authorized'] = True
+    except Exception:
+        pass
     socketio.emit('session_ready', {'server_id': data.get('server_id')}, room=browser_sid)
 
 
@@ -180,6 +185,11 @@ def handle_session_denied_from_server(data):
     browser_sid = data.get('browser_sid')
     if not browser_sid:
         return
+    try:
+        if browser_sid in browser_sessions:
+            browser_sessions[browser_sid].pop('authorized', None)
+    except Exception:
+        pass
     socketio.emit('session_denied', {'server_id': data.get('server_id'), 'reason': data.get('reason')}, room=browser_sid)
 
 
@@ -203,6 +213,13 @@ def handle_command(data):
     if isinstance(cmd_data, dict) and cmd_data.get('type') == 'disconnect_request':
         socketio.emit('end_session', {'browser_sid': browser_sid, 'server_id': server_id}, room=server['sid'])
         browser_sessions.pop(browser_sid, None)
+        return
+
+    if not session.get('authorized'):
+        try:
+            socketio.emit('session_denied', {'server_id': server_id, 'reason': 'not_authorized'}, room=browser_sid)
+        except Exception:
+            pass
         return
 
     socketio.emit('relay_command', {'browser_sid': browser_sid, 'server_id': server_id, 'cmd': cmd_data}, room=server['sid'])
