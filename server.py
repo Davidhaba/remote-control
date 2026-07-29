@@ -10,8 +10,8 @@ import io
 import sys
 import ctypes
 import uuid
-import requests
 from ctypes import wintypes
+import socketio
 try:
     import pyautogui
 except Exception:
@@ -169,7 +169,7 @@ FIXED_FRAME_HEIGHT = 720
 
 parser = argparse.ArgumentParser(description='Remote control server')
 parser.add_argument('--password', default=None, help='Optional password required for client authentication')
-parser.add_argument('--relay-url', default=os.environ.get('RELAY_URL', 'https://remote-control-ee7w.onrender.com/'), help='Render Socket.IO relay URL')
+parser.add_argument('--relay-url', default=os.environ.get('RELAY_URL', 'https://your-render-app.onrender.com'), help='Render Socket.IO relay URL')
 parser.add_argument('--server-id', default=None, help='Unique ID for this server')
 args = parser.parse_args()
 
@@ -177,156 +177,72 @@ if not args.server_id:
     host_name = socket.gethostname().replace(' ', '-').lower()
     args.server_id = f"{host_name}-{uuid.uuid4().hex[:8]}"
 
+relay_socket = socketio.Client()
 relay_connected = False
-relay_heartbeat_thread_started = False
-relay_retry_thread_started = False
-
-
-def normalize_relay_url(value):
-    value = (value or '').strip()
-    if not value:
-        return 'https://remote-control-ee7w.onrender.com/'
-    if not value.startswith(('http://', 'https://')):
-        value = f'https://{value}'
-    return value.rstrip('/')
 
 
 def connect_to_relay():
-    global relay_connected, relay_heartbeat_thread_started, relay_retry_thread_started
-    if relay_connected:
-        return
-
-    relay_url = normalize_relay_url(args.relay_url)
+    global relay_socket, relay_connected
     try:
-        print(f'[relay] registering at {relay_url}/api/register-server')
-        response = requests.post(
-            f'{relay_url}/api/register-server',
-            json={
-                'server_id': args.server_id,
-                'name': socket.gethostname(),
-                'hostname': socket.gethostname(),
-                'address': args.server_id,
-                'password_protected': bool(server_password),
-            },
-            timeout=10,
-        )
-        if response.ok:
-            relay_connected = True
-            print('[relay] registered successfully')
-            if not relay_heartbeat_thread_started:
-                relay_heartbeat_thread_started = True
-                threading.Thread(target=relay_heartbeat, daemon=True).start()
-            return
-        print(f'[relay] registration failed: {response.status_code} {response.text}')
+        relay_socket.connect(args.relay_url, transports=['websocket'])
+        relay_connected = True
+        relay_socket.emit('register_server', {
+            'server_id': args.server_id,
+            'name': socket.gethostname(),
+            'hostname': socket.gethostname(),
+            'address': args.server_id,
+            'password_protected': bool(server_password),
+        })
+        threading.Thread(target=relay_heartbeat, daemon=True).start()
     except Exception as e:
         print(f'[relay] connection failed: {e}')
-
-    if not relay_retry_thread_started:
-        relay_retry_thread_started = True
-        threading.Thread(target=retry_relay_connection, daemon=True).start()
-
-
-def retry_relay_connection():
-    while not relay_connected:
-        time.sleep(5)
-        connect_to_relay()
 
 
 def relay_heartbeat():
     while True:
         try:
             if relay_connected:
-                requests.post(
-                    f'{normalize_relay_url(args.relay_url)}/api/heartbeat',
-                    json={'server_id': args.server_id},
-                    timeout=5,
-                )
+                relay_socket.emit('server_heartbeat', {'server_id': args.server_id})
         except Exception:
             pass
         time.sleep(5)
 
 
-def post_frame_to_relay(browser_sid, frame_b64, cursor_b64=None, hx=0, hy=0, fmt='raw'):
-    try:
-        payload = {
-            'browser_sid': browser_sid,
-            'frame': frame_b64,
-            'cursorImage': cursor_b64,
-            'cursorHotspotX': hx,
-            'cursorHotspotY': hy,
-            'cursorFormat': fmt,
-        }
-        requests.post(f'{normalize_relay_url(args.relay_url)}/api/server-frame', json=payload, timeout=10)
-    except Exception:
-        pass
+@relay_socket.event
+def on_connect():
+    global relay_connected
+    relay_connected = True
+    relay_socket.emit('register_server', {
+        'server_id': args.server_id,
+        'name': socket.gethostname(),
+        'hostname': socket.gethostname(),
+        'address': args.server_id,
+        'password_protected': bool(server_password),
+    })
 
 
-def poll_sessions_loop():
-    while True:
-        try:
-            r = requests.get(f'{normalize_relay_url(args.relay_url)}/api/poll-session', params={'server_id': args.server_id}, timeout=10)
-            if r.ok:
-                data = r.json()
-                pending = data.get('pending')
-                if pending:
-                    browser_sid = pending.get('browser_sid') or pending.get('socket_id')
-                    try:
-                        requests.post(f'{normalize_relay_url(args.relay_url)}/api/session-ready', json={'browser_sid': browser_sid, 'server_id': args.server_id}, timeout=10)
-                    except Exception:
-                        pass
+@relay_socket.on('request_session')
+def on_request_session(data):
+    data = data or {}
+    browser_sid = data.get('browser_sid')
+    if browser_sid:
+        relay_socket.emit('session_ready', {'browser_sid': browser_sid, 'server_id': args.server_id})
 
-                    # start streaming frames and polling commands until disconnect
-                    try:
-                        while True:
-                            frame = capture_screen_dxgi()
-                            try:
-                                ok, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
-                                if not ok:
-                                    continue
-                                b64 = base64.b64encode(buf).decode('ascii')
-                            except Exception:
-                                b64 = ''
 
-                            with cursor_lock:
-                                cursor_b64 = cursor_cache.get('b64')
-                                hx = cursor_cache.get('hx', 0)
-                                hy = cursor_cache.get('hy', 0)
-                                fmt = cursor_cache.get('fmt', 'raw')
-
-                            post_frame_to_relay(browser_sid, b64, cursor_b64, hx, hy, fmt)
-
-                            # poll commands
-                            try:
-                                rc = requests.get(f'{normalize_relay_url(args.relay_url)}/api/poll-commands', params={'server_id': args.server_id}, timeout=5)
-                                if rc.ok:
-                                    cmds = rc.json().get('commands', [])
-                                    for item in cmds:
-                                        cmd = item.get('cmd') if isinstance(item, dict) and 'cmd' in item else item
-                                        execute_command(cmd)
-                                        if isinstance(cmd, dict) and cmd.get('type') == 'disconnect_request':
-                                            raise StopIteration
-                            except StopIteration:
-                                break
-                            except Exception:
-                                pass
-
-                            time.sleep(0.05)
-                    except Exception:
-                        pass
-        except Exception:
-            pass
-        time.sleep(2)
+@relay_socket.on('relay_command')
+def on_relay_command(data):
+    data = data or {}
+    cmd = data.get('cmd')
+    if cmd:
+        execute_command(cmd)
 
 
 if args.password is None:
-    if __name__ == '__main__':
-        try:
-            entered_password = input('Set a password for remote access (leave empty to disable password): ').strip()
-            server_password = entered_password or None
-        except KeyboardInterrupt:
-            print('\nNo password set.')
-            server_password = None
-    else:
+    try:
+        entered_password = input('Set a password for remote access (leave empty to disable password): ').strip()
+        server_password = entered_password or None
+    except KeyboardInterrupt:
+        print('\nNo password set.')
         server_password = None
 else:
     server_password = args.password
@@ -765,7 +681,6 @@ cursor_thread.start()
 tcp_thread.start()
 udp_thread.start()
 connect_to_relay()
-threading.Thread(target=poll_sessions_loop, daemon=True).start()
 try:
     tcp_thread.join()
     udp_thread.join()

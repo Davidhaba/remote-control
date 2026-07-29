@@ -14,8 +14,6 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 registered_servers = {}
 browser_sessions = {}
-pending_sessions = {}
-pending_commands = {}
 
 
 def _server_snapshot(server_id, server_info):
@@ -65,26 +63,16 @@ def connect():
     }
 
     server = registered_servers.get(server_id)
-    if not server:
+    if not server or not server.get('sid'):
         return jsonify({'error': 'Selected server is not available'}), 404
 
-    if server.get('sid'):
-        socketio.emit('request_session', {
-            'browser_sid': socket_id,
-            'server_id': server_id,
-            'password': password,
-            'type': data.get('type', 'desktop'),
-        }, room=server['sid'])
-        return jsonify({'status': 'connected'})
-
-    pending_sessions.setdefault(server_id, []).append({
+    socketio.emit('request_session', {
         'browser_sid': socket_id,
         'server_id': server_id,
         'password': password,
         'type': data.get('type', 'desktop'),
-        'requested_at': time.time(),
-    })
-    return jsonify({'status': 'pending'})
+    }, room=server['sid'])
+    return jsonify({'status': 'connected'})
 
 
 @app.route('/api/disconnect', methods=['POST'])
@@ -98,80 +86,6 @@ def api_disconnect():
         if server and server.get('sid'):
             socketio.emit('end_session', {'browser_sid': socket_id, 'server_id': server_id}, room=server['sid'])
     return jsonify({'status': 'disconnected'})
-
-
-@app.route('/api/poll-session', methods=['GET'])
-def api_poll_session():
-    server_id = request.args.get('server_id')
-    if not server_id:
-        return jsonify({'error': 'missing server_id'}), 400
-    lst = pending_sessions.get(server_id) or []
-    if not lst:
-        return jsonify({'pending': None})
-    sess = lst.pop(0)
-    return jsonify({'pending': sess})
-
-
-@app.route('/api/session-ready', methods=['POST'])
-def api_session_ready():
-    data = request.json or {}
-    browser_sid = data.get('browser_sid')
-    server_id = data.get('server_id')
-    if browser_sid:
-        socketio.emit('session_ready', {'server_id': server_id}, to=browser_sid)
-    return jsonify({'status': 'ok'})
-
-
-@app.route('/api/server-frame', methods=['POST'])
-def api_server_frame():
-    data = request.json or {}
-    browser_sid = data.get('browser_sid')
-    if not browser_sid:
-        return jsonify({'error': 'missing browser_sid'}), 400
-    payload = {
-        'frame': data.get('frame'),
-        'cursorImage': data.get('cursorImage'),
-        'cursorHotspotX': data.get('cursorHotspotX', 0),
-        'cursorHotspotY': data.get('cursorHotspotY', 0),
-        'cursorFormat': data.get('cursorFormat', 'raw'),
-    }
-    socketio.emit('frame', payload, to=browser_sid)
-    return jsonify({'status': 'ok'})
-
-
-@app.route('/api/poll-commands', methods=['GET'])
-def api_poll_commands():
-    server_id = request.args.get('server_id')
-    if not server_id:
-        return jsonify({'error': 'missing server_id'}), 400
-    cmds = pending_commands.pop(server_id, [])
-    return jsonify({'commands': cmds})
-
-
-@app.route('/api/register-server', methods=['POST'])
-def register_server():
-    data = request.json or {}
-    server_id = data.get('server_id') or f"server-{int(time.time())}"
-    registered_servers[server_id] = {
-        'sid': None,
-        'name': data.get('name', server_id),
-        'hostname': data.get('hostname', socket.gethostname()),
-        'address': data.get('address', server_id),
-        'status': 'online',
-        'last_seen': time.time(),
-        'password_protected': bool(data.get('password_protected')),
-    }
-    return jsonify({'status': 'registered', 'server_id': server_id})
-
-
-@app.route('/api/heartbeat', methods=['POST'])
-def server_heartbeat():
-    data = request.json or {}
-    server_id = data.get('server_id')
-    if server_id in registered_servers:
-        registered_servers[server_id]['last_seen'] = time.time()
-        return jsonify({'status': 'ok'})
-    return jsonify({'status': 'unknown_server'}), 404
 
 
 @app.route('/api/discover-android', methods=['GET'])
@@ -269,16 +183,11 @@ def handle_command(data):
         return
 
     if isinstance(cmd_data, dict) and cmd_data.get('type') == 'disconnect_request':
-        if server.get('sid'):
-            socketio.emit('end_session', {'browser_sid': browser_sid, 'server_id': server_id}, room=server['sid'])
+        socketio.emit('end_session', {'browser_sid': browser_sid, 'server_id': server_id}, room=server['sid'])
         browser_sessions.pop(browser_sid, None)
         return
 
-    # if server connected over Socket.IO, emit directly; otherwise queue command for HTTP-polling server
-    if server.get('sid'):
-        socketio.emit('relay_command', {'browser_sid': browser_sid, 'server_id': server_id, 'cmd': cmd_data}, room=server['sid'])
-    else:
-        pending_commands.setdefault(server_id, []).append({'browser_sid': browser_sid, 'cmd': cmd_data})
+    socketio.emit('relay_command', {'browser_sid': browser_sid, 'server_id': server_id, 'cmd': cmd_data}, room=server['sid'])
 
 
 @socketio.on('disconnect')

@@ -4,39 +4,24 @@ import threading
 import time
 import socketio
 
-SERVER_URL = os.environ.get('RELAY_URL', 'https://remote-control-ee7w.onrender.com/')
+SERVER_URL = os.environ.get('RELAY_URL', 'https://your-render-app.onrender.com')
 SERVER_ID = os.environ.get('SERVER_ID', 'default-server')
 SERVER_PASSWORD = os.environ.get('SERVER_PASSWORD', '')
 
 socketio_client = socketio.Client()
 
 
-def normalize_relay_url(value):
-    value = (value or '').strip()
-    if not value:
-        return 'https://remote-control-ee7w.onrender.com/'
-    if not value.startswith(('http://', 'https://')):
-        value = f'https://{value}'
-    return value.rstrip('/')
-
-
 def connect_to_relay():
     try:
-        relay_url = normalize_relay_url(SERVER_URL)
-        for transports in (['websocket', 'polling'], ['polling'], ['websocket']):
-            try:
-                socketio_client.connect(relay_url, transports=transports, wait_timeout=10)
-                socketio_client.emit('register_server', {
-                    'server_id': SERVER_ID,
-                    'name': socket.gethostname(),
-                    'hostname': socket.gethostname(),
-                    'address': SERVER_ID,
-                    'password_protected': bool(SERVER_PASSWORD),
-                })
-                threading.Thread(target=heartbeat_loop, daemon=True).start()
-                return
-            except Exception as e:
-                print(f'relay connect error via {transports}: {e}')
+        socketio_client.connect(SERVER_URL, transports=['websocket'])
+        socketio_client.emit('register_server', {
+            'server_id': SERVER_ID,
+            'name': socket.gethostname(),
+            'hostname': socket.gethostname(),
+            'address': SERVER_ID,
+            'password_protected': bool(SERVER_PASSWORD),
+        })
+        threading.Thread(target=heartbeat_loop, daemon=True).start()
     except Exception as e:
         print('relay connect error', e)
 
