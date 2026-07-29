@@ -723,7 +723,6 @@
                 if (data && data.server_id && selectedServer && data.server_id === selectedServer) {
                     statusDiv.className = 'status';
                     statusDiv.textContent = 'Connecting via WebRTC...';
-                    showScreenView();
                     startWebRTCSession();
                 }
             } catch (e) { }
