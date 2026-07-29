@@ -1,4 +1,5 @@
 import argparse
+import os
 import socket
 import threading
 import numpy as np
@@ -8,7 +9,9 @@ import base64
 import io
 import sys
 import ctypes
+import uuid
 from ctypes import wintypes
+from flask_socketio import SocketIO
 try:
     import pyautogui
 except Exception:
@@ -166,7 +169,60 @@ FIXED_FRAME_HEIGHT = 720
 
 parser = argparse.ArgumentParser(description='Remote control server')
 parser.add_argument('--password', default=None, help='Optional password required for client authentication')
+parser.add_argument('--relay-url', default=os.environ.get('RELAY_URL', 'https://your-render-app.onrender.com'), help='Render Socket.IO relay URL')
+parser.add_argument('--server-id', default=None, help='Unique ID for this server')
 args = parser.parse_args()
+
+if not args.server_id:
+    host_name = socket.gethostname().replace(' ', '-').lower()
+    args.server_id = f"{host_name}-{uuid.uuid4().hex[:8]}"
+
+relay_socket = SocketIO(logger=False, engineio_logger=False, cors_allowed_origins='*')
+relay_connected = False
+
+
+def connect_to_relay():
+    global relay_socket, relay_connected
+    try:
+        relay_socket.connect(args.relay_url, transports=['websocket'], namespaces=['/'])
+        relay_connected = True
+        relay_socket.emit('register_server', {
+            'server_id': args.server_id,
+            'name': socket.gethostname(),
+            'hostname': socket.gethostname(),
+            'address': args.server_id,
+            'password_protected': bool(server_password),
+        })
+        threading.Thread(target=relay_heartbeat, daemon=True).start()
+    except Exception as e:
+        print(f'[relay] connection failed: {e}')
+
+
+def relay_heartbeat():
+    while True:
+        try:
+            if relay_connected:
+                relay_socket.emit('server_heartbeat', {'server_id': args.server_id})
+        except Exception:
+            pass
+        time.sleep(5)
+
+
+@relay_socket.on('request_session')
+def on_request_session(data):
+    data = data or {}
+    browser_sid = data.get('browser_sid')
+    if browser_sid:
+        relay_socket.emit('session_ready', {'browser_sid': browser_sid, 'server_id': args.server_id}, to=browser_sid)
+
+
+@relay_socket.on('relay_command')
+def on_relay_command(data):
+    data = data or {}
+    cmd = data.get('cmd')
+    if cmd:
+        execute_command(cmd)
+
 
 if args.password is None:
     try:
@@ -611,6 +667,7 @@ udp_thread = threading.Thread(target=udp_broadcast_listener, daemon=True)
 cursor_thread.start()
 tcp_thread.start()
 udp_thread.start()
+connect_to_relay()
 try:
     tcp_thread.join()
     udp_thread.join()

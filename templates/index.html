@@ -402,7 +402,7 @@
             fetch('/api/connect', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ address: address, type: 'desktop', password })
+                body: JSON.stringify({ server_id: address, socket_id: socket.id, type: 'desktop', password })
             })
                 .then(res => res.json())
                 .then(data => {
@@ -439,7 +439,7 @@
             fetch('/api/connect', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ device_id: deviceId, type: 'android', password })
+                body: JSON.stringify({ server_id: deviceId, socket_id: socket.id, type: 'android', password })
             })
                 .then(res => res.json())
                 .then(data => {

@@ -1,13 +1,10 @@
+import os
 import socket
 import threading
-import json
-import base64
 import time
-import queue
 import subprocess
-import os
 import shutil
-import ipaddress
+import json
 from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO
 
@@ -15,253 +12,91 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = 'your-secret-key'
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
-remote_server_socket = None
-remote_server_cmd_socket = None
-remote_server_host = None
-remote_server_port = None
-is_connected = False
-frame_queue = queue.Queue(maxsize=2)
-last_frame_time = 0
-current_latency = 50
-latency_sample_time = 0
-
-def connect_to_remote_server(host, port, password=None):
-    global remote_server_socket, remote_server_cmd_socket, remote_server_host, remote_server_port, is_connected
-    try:
-        remote_server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        remote_server_socket.connect((host, port))
-        remote_server_host = host
-        remote_server_port = port
-        is_connected = True
-
-        greeting = remote_server_socket.recv(1024).decode('utf-8', errors='ignore').strip()
-        if greeting == 'AUTH_REQUIRED':
-            remote_server_socket.sendall(f"AUTH:{password or ''}\n".encode())
-            auth_reply = remote_server_socket.recv(1024).decode('utf-8', errors='ignore').strip()
-            if auth_reply != 'AUTH_OK':
-                raise PermissionError('Authentication failed')
-            cmd_port_msg = remote_server_socket.recv(1024).decode('utf-8', errors='ignore').strip()
-        else:
-            cmd_port_msg = greeting
-
-        if cmd_port_msg.startswith("CMD_PORT:"):
-            cmd_port = int(cmd_port_msg.split(":")[1])
-            remote_server_cmd_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            remote_server_cmd_socket.connect((host, cmd_port))
-        threading.Thread(target=receive_frames, daemon=True).start()
-        threading.Thread(target=broadcast_frames, daemon=True).start()
-        return True
-    except Exception:
-        is_connected = False
-        return False
-
-def receive_frames():
-    global remote_server_socket, is_connected
-    global last_frame_time, current_latency, latency_sample_time
-    try:
-        while is_connected and remote_server_socket:
-            try:
-                size_data = remote_server_socket.recv(4)
-                if not size_data:
-                    is_connected = False
-                    break
-                size = int.from_bytes(size_data, 'big')
-                buffer = bytearray()
-                while len(buffer) < size:
-                    packet = remote_server_socket.recv(min(size - len(buffer), 65536))
-                    if not packet:
-                        break
-                    buffer.extend(packet)
-                frame_b64 = base64.b64encode(buffer).decode('utf-8')
-                meta = {}
-                try:
-                    meta_size_data = remote_server_socket.recv(4)
-                    if meta_size_data:
-                        meta_size = int.from_bytes(meta_size_data, 'big')
-                        meta_buf = bytearray()
-                        while len(meta_buf) < meta_size:
-                            packet = remote_server_socket.recv(min(meta_size - len(meta_buf), 65536))
-                            if not packet:
-                                break
-                            meta_buf.extend(packet)
-                        try:
-                            meta = json.loads(meta_buf.decode('utf-8'))
-                        except Exception:
-                            meta = {}
-                except Exception:
-                    meta = {}
-                payload = {'frame': frame_b64}
-                if meta:
-                    payload.update(meta)
-                try:
-                    now = time.time()
-                    if now - latency_sample_time >= 1.0:
-                        if last_frame_time > 0:
-                            frame_interval = (now - last_frame_time) * 1000
-                            current_latency = int(round(current_latency * 0.6 + frame_interval * 0.4))
-                            current_latency = max(10, min(10000, current_latency))
-                        latency_sample_time = now
-                    last_frame_time = now
-                except Exception:
-                    pass
-                try:
-                    frame_queue.put_nowait(payload)
-                except queue.Full:
-                    try:
-                        frame_queue.get_nowait()
-                        frame_queue.put_nowait(payload)
-                    except Exception:
-                        pass
-            except Exception:
-                break
-    except Exception:
-        is_connected = False
-
-def broadcast_frames():
-    while True:
-        try:
-            payload = frame_queue.get()
-            frame_data = {'frame': payload['frame']}
-            if 'cursorImage' in payload:
-                    if 'cursorImage' in payload:
-                        frame_data['cursorImage'] = payload['cursorImage']
-                        frame_data['cursorHotspotX'] = payload.get('cursorHotspotX', 0)
-                        frame_data['cursorHotspotY'] = payload.get('cursorHotspotY', 0)
-            socketio.emit('frame', frame_data, to=None, skip_sid=None)
-        except Exception:
-            pass
-
-def send_command_to_server(cmd_data):
-    global remote_server_cmd_socket, is_connected, current_latency
-    if not is_connected or not remote_server_cmd_socket:
-        return False
-    try:
-        cmd_json = json.dumps(cmd_data)
-        message = f"CMD:{cmd_json}\nLATENCY:{int(current_latency)}\n"
-        remote_server_cmd_socket.sendall(message.encode())
-        return True
-    except Exception:
-        is_connected = False
-        return False
+registered_servers = {}
+browser_sessions = {}
 
 
-def disconnect_remote_server():
-    global remote_server_cmd_socket, remote_server_socket, is_connected, remote_server_host, remote_server_port
-    try:
-        if remote_server_cmd_socket:
-            try:
-                remote_server_cmd_socket.sendall(b"DISCONNECT\n")
-            except Exception:
-                pass
-            try:
-                remote_server_cmd_socket.close()
-            except Exception:
-                pass
-            remote_server_cmd_socket = None
+def _server_snapshot(server_id, server_info):
+    return {
+        'server_id': server_id,
+        'name': server_info.get('name', server_id),
+        'status': server_info.get('status', 'online'),
+        'hostname': server_info.get('hostname', server_id),
+        'last_seen': server_info.get('last_seen', 0),
+        'address': server_info.get('address', server_id),
+    }
 
-        if remote_server_socket:
-            try:
-                remote_server_socket.close()
-            except Exception:
-                pass
-            remote_server_socket = None
-
-        is_connected = False
-        remote_server_host = None
-        remote_server_port = None
-
-        try:
-            while not frame_queue.empty():
-                frame_queue.get_nowait()
-        except Exception:
-            pass
-
-        return True
-    except Exception:
-        is_connected = False
-        return False
 
 @app.route('/')
 def index():
     return render_template('index.html')
 
-def _probe_discovery_targets():
-    targets = ["127.0.0.1", "255.255.255.255", "<broadcast>"]
-    try:
-        hostname = socket.gethostname()
-        for ip in socket.gethostbyname_ex(hostname)[2]:
-            if not ip or ip.startswith('127.'):
-                continue
-            try:
-                ip_obj = ipaddress.ip_address(ip)
-            except ValueError:
-                continue
-            if ip_obj.version != 4:
-                continue
-            targets.append(ip)
-            try:
-                network = ipaddress.ip_network(f"{ip}/24", strict=False)
-                targets.append(str(network.broadcast_address))
-            except ValueError:
-                pass
-    except Exception:
-        pass
-    seen = set()
-    clean_targets = []
-    for target in targets:
-        if target not in seen:
-            seen.add(target)
-            clean_targets.append(target)
-    return clean_targets
 
 @app.route('/api/discover-servers', methods=['GET'])
 def discover_servers():
     try:
-        import socket as socket_module
-        message = b"DISCOVER_SERVER"
+        now = time.time()
         servers = []
-        seen_addresses = set()
-        targets = _probe_discovery_targets()
-
-        for target in targets:
-            try:
-                client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                client.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-                client.settimeout(0.15)
-                client.sendto(message, (target, 45))
-                try:
-                    data, _ = client.recvfrom(1024)
-                    server_info = data.decode(errors='ignore').strip()
-                    if server_info and server_info not in seen_addresses:
-                        seen_addresses.add(server_info)
-                        host_part = server_info.split(':', 1)[0] if ':' in server_info else server_info
-                        try:
-                            hostname = socket_module.gethostbyaddr(host_part)[0]
-                        except Exception:
-                            hostname = host_part
-                        servers.append({"address": server_info, "ip": host_part, "hostname": hostname})
-                except socket.timeout:
-                    pass
-                finally:
-                    client.close()
-            except Exception:
+        for server_id, server_info in registered_servers.items():
+            if now - server_info.get('last_seen', now) > 20:
                 continue
-
-            if servers:
-                break
-
-        return jsonify({"servers": servers})
+            servers.append(_server_snapshot(server_id, server_info))
+        return jsonify({'servers': servers})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({'error': str(e)}), 500
 
-def _get_android_devices():
+
+@app.route('/api/connect', methods=['POST'])
+def connect():
+    data = request.json or {}
+    server_id = data.get('server_id') or data.get('address')
+    socket_id = data.get('socket_id')
+    password = data.get('password')
+    if not server_id or not socket_id:
+        return jsonify({'error': 'Missing server selection'}), 400
+
+    browser_sessions[socket_id] = {
+        'server_id': server_id,
+        'socket_id': socket_id,
+        'password': password,
+        'type': data.get('type', 'desktop'),
+    }
+
+    server = registered_servers.get(server_id)
+    if not server or not server.get('sid'):
+        return jsonify({'error': 'Selected server is not available'}), 404
+
+    socketio.emit('request_session', {
+        'browser_sid': socket_id,
+        'server_id': server_id,
+        'password': password,
+        'type': data.get('type', 'desktop'),
+    }, room=server['sid'])
+    return jsonify({'status': 'connected'})
+
+
+@app.route('/api/disconnect', methods=['POST'])
+def api_disconnect():
+    data = request.json or {}
+    socket_id = data.get('socket_id')
+    if socket_id in browser_sessions:
+        session = browser_sessions.pop(socket_id)
+        server_id = session.get('server_id')
+        server = registered_servers.get(server_id)
+        if server and server.get('sid'):
+            socketio.emit('end_session', {'browser_sid': socket_id, 'server_id': server_id}, room=server['sid'])
+    return jsonify({'status': 'disconnected'})
+
+
+@app.route('/api/discover-android', methods=['GET'])
+def discover_android():
     try:
         adb = shutil.which('adb')
         if not adb:
-            return []
+            return jsonify({'devices': []})
         result = subprocess.run([adb, 'devices', '-l'], capture_output=True, text=True, timeout=10)
         if result.returncode != 0:
-            return []
+            return jsonify({'devices': []})
         devices = []
         for line in result.stdout.splitlines()[1:]:
             parts = line.split()
@@ -270,76 +105,106 @@ def _get_android_devices():
             device_id = parts[0]
             if device_id.endswith('device'):
                 device_id = device_id[:-len('device')]
-            if not device_id:
-                continue
-            props = {}
-            for part in parts[1:]:
-                if ':' in part:
-                    k, v = part.split(':', 1)
-                    props[k] = v
-            manufacturer = props.get('manufacturer', 'Unknown')
-            model = props.get('model', 'Unknown')
-            android_version = props.get('ro.build.version.release', 'Unknown')
-            devices.append({
-                'id': device_id,
-                'manufacturer': manufacturer,
-                'model': model,
-                'android_version': android_version,
-            })
-        return devices
-    except Exception:
-        return []
-
-@app.route('/api/discover-android', methods=['GET'])
-def discover_android():
-    try:
-        devices = _get_android_devices()
+            if device_id:
+                props = {}
+                for part in parts[1:]:
+                    if ':' in part:
+                        k, v = part.split(':', 1)
+                        props[k] = v
+                devices.append({
+                    'id': device_id,
+                    'manufacturer': props.get('manufacturer', 'Unknown'),
+                    'model': props.get('model', 'Unknown'),
+                    'android_version': props.get('ro.build.version.release', 'Unknown'),
+                })
         return jsonify({'devices': devices})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/connect', methods=['POST'])
-def connect():
-    data = request.json or {}
-    host_port = data.get('address')
-    password = data.get('password')
-    if not host_port:
-        return jsonify({"error": "No address provided"}), 400
-    try:
-        host, port = host_port.rsplit(':', 1)
-        port = int(port)
-        if connect_to_remote_server(host, port, password=password):
-            return jsonify({"status": "connected"})
-        else:
-            return jsonify({"error": "Failed to connect"}), 500
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+
+@socketio.on('connect')
+def handle_socket_connect():
+    return None
+
+
+@socketio.on('register_server')
+def handle_register_server(data):
+    data = data or {}
+    server_id = data.get('server_id') or f"server-{request.sid[:8]}"
+    registered_servers[server_id] = {
+        'sid': request.sid,
+        'name': data.get('name', server_id),
+        'hostname': data.get('hostname', socket.gethostname()),
+        'address': data.get('address', server_id),
+        'status': 'online',
+        'last_seen': time.time(),
+        'password_protected': bool(data.get('password_protected')),
+    }
+
+
+@socketio.on('server_heartbeat')
+def handle_server_heartbeat(data):
+    server_id = (data or {}).get('server_id')
+    if server_id in registered_servers:
+        registered_servers[server_id]['last_seen'] = time.time()
+
+
+@socketio.on('server_frame')
+def handle_server_frame(data):
+    data = data or {}
+    browser_sid = data.get('browser_sid')
+    if not browser_sid:
+        return
+    payload = {
+        'frame': data.get('frame'),
+        'cursorImage': data.get('cursorImage'),
+        'cursorHotspotX': data.get('cursorHotspotX', 0),
+        'cursorHotspotY': data.get('cursorHotspotY', 0),
+        'cursorFormat': data.get('cursorFormat', 'raw'),
+    }
+    socketio.emit('frame', payload, to=browser_sid)
+
 
 @socketio.on('command')
 def handle_command(data):
+    data = data or {}
     cmd_data = data.get('cmd')
-    if cmd_data:
-        try:
-            if isinstance(cmd_data, dict) and cmd_data.get('type') == 'disconnect_request':
-                disconnect_remote_server()
-                return
-        except Exception:
-            pass
-        send_command_to_server(cmd_data)
+    browser_sid = request.sid
+    if not cmd_data:
+        return
+
+    session = browser_sessions.get(browser_sid)
+    if not session:
+        return
+
+    server_id = session.get('server_id')
+    server = registered_servers.get(server_id)
+    if not server or not server.get('sid'):
+        return
+
+    if isinstance(cmd_data, dict) and cmd_data.get('type') == 'disconnect_request':
+        socketio.emit('end_session', {'browser_sid': browser_sid, 'server_id': server_id}, room=server['sid'])
+        browser_sessions.pop(browser_sid, None)
+        return
+
+    socketio.emit('relay_command', {'browser_sid': browser_sid, 'server_id': server_id, 'cmd': cmd_data}, room=server['sid'])
 
 
-@app.route('/api/disconnect', methods=['POST'])
-def api_disconnect():
-    try:
-        success = disconnect_remote_server()
-        if success:
-            return jsonify({"status": "disconnected"})
-        else:
-            return jsonify({"error": "failed to disconnect"}), 500
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+@socketio.on('disconnect')
+def handle_socket_disconnect():
+    browser_sid = request.sid
+    if browser_sid in browser_sessions:
+        session = browser_sessions.pop(browser_sid)
+        server_id = session.get('server_id')
+        server = registered_servers.get(server_id)
+        if server and server.get('sid'):
+            socketio.emit('end_session', {'browser_sid': browser_sid, 'server_id': server_id}, room=server['sid'])
 
-threading.Thread(target=broadcast_frames, daemon=True).start()
+    for server_id, server_info in list(registered_servers.items()):
+        if server_info.get('sid') == browser_sid:
+            del registered_servers[server_id]
+            break
+
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
