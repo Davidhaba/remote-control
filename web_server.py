@@ -88,6 +88,32 @@ def api_disconnect():
     return jsonify({'status': 'disconnected'})
 
 
+@app.route('/api/register-server', methods=['POST'])
+def register_server():
+    data = request.json or {}
+    server_id = data.get('server_id') or f"server-{int(time.time())}"
+    registered_servers[server_id] = {
+        'sid': None,
+        'name': data.get('name', server_id),
+        'hostname': data.get('hostname', socket.gethostname()),
+        'address': data.get('address', server_id),
+        'status': 'online',
+        'last_seen': time.time(),
+        'password_protected': bool(data.get('password_protected')),
+    }
+    return jsonify({'status': 'registered', 'server_id': server_id})
+
+
+@app.route('/api/heartbeat', methods=['POST'])
+def server_heartbeat():
+    data = request.json or {}
+    server_id = data.get('server_id')
+    if server_id in registered_servers:
+        registered_servers[server_id]['last_seen'] = time.time()
+        return jsonify({'status': 'ok'})
+    return jsonify({'status': 'unknown_server'}), 404
+
+
 @app.route('/api/discover-android', methods=['GET'])
 def discover_android():
     try:
