@@ -258,6 +258,7 @@
             if (rightPanel && !rightPanel.classList.contains('collapsed')) {
                 rightPanel.classList.add('collapsed');
             }
+            discoverServers();
         });
 
         function switchTab(tab) {
@@ -281,6 +282,8 @@
                     __serverItems.length = 0;
                     if (!data.servers || data.servers.length === 0) {
                         serverList.innerHTML = '<p class="muted-text">No servers found</p>';
+                        statusDiv.className = 'status';
+                        statusDiv.textContent = 'No servers';
                         return;
                     }
                     data.servers.forEach(server => {
