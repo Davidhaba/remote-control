@@ -254,10 +254,12 @@ input:focus,
 .big-btn:focus,
 .pill:focus,
 .btn-primary:focus,
-.btn-ghost:focus,
-#hide-panel-btn:focus {
+.btn-ghost:focus {
     outline: 3px solid rgba(109, 40, 217, 0.18);
-    outline-offset: 2px;
+}
+
+#hide-panel-btn:focus {
+    border: 3px solid rgba(109, 40, 217, 0.18);
 }
 
 h2 {
@@ -452,11 +454,13 @@ h2 {
 #hide-panel-btn {
     display: flex;
     height: 100%;
-    padding: 0 10px;
+    width: 40px;
     display: flex;
     align-items: center;
     justify-content: center;
-    border-radius: 0;
+    border-radius: 0 18px 18px 0;
+    border: 3px solid transparent;
+    outline: none;
 }
 
 #hide-panel-btn i {
@@ -473,14 +477,14 @@ h2 {
 #screenHeader {
     display: flex;
     position: fixed;
-    left: 18px;
+    left: 0;
     top: 18px;
     height: 64px;
     width: auto;
     min-width: 240px;
     max-width: calc(100% - 80px);
     background: rgba(14, 20, 32, 0.96);
-    padding: 0 14px;
+    padding: 0;
     border-radius: 0 18px 18px 0;
     z-index: 10;
     overflow: hidden;
@@ -488,15 +492,15 @@ h2 {
 }
 
 #screenHeader.collapsed {
-    transform: translateX(-95%);
+    transform: translateX(calc(-100% + 40px));
 }
 
 #screenHeader.collapsed #hide-panel-btn i {
-    transform: rotate(0deg);
+    transform: rotate(-90deg);
 }
 
 .btn-space {
-    margin-left: 12px;
+    margin-right: 12px;
 }
 
 .panel-header {
@@ -690,12 +694,14 @@ h2 {
     color: inherit
 }
 
-#remoteCursorImg, #remoteCursorCircle {
+#remoteCursorImg,
+#remoteCursorCircle {
     display: none;
     position: absolute;
     pointer-events: none;
     z-index: 1060;
 }
+
 #remoteCursorCircle {
     width: 10px;
     height: 10px;

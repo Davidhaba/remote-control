@@ -8,16 +8,12 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    <style>
-        #view-connect { display: block !important; }
-        #view-screen { display: none !important; }
-    </style>
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
 </head>
 
 <body>
 
-    <div id="view-connect" style="display: block;">
+    <div id="view-connect">
         <div class="app-header">
             <div class="app-title">📱 Remote Control</div>
         </div>
@@ -32,7 +28,7 @@
 
                 <!-- Desktop Tab -->
                 <div id="tab-desktop" class="tab-content active">
-                        <div class="card-header">
+                    <div class="card-header">
                         <div>
                             <div class="card-title">Available servers</div>
                             <div class="card-subtitle">Select a host from the local relay and connect securely.</div>
@@ -41,12 +37,14 @@
                     </div>
 
                     <div class="controls">
-                        <button class="btn btn-primary" onclick="discoverServers()"><i class="fa fa-search"></i> Discover servers</button>
+                        <button class="btn btn-primary" onclick="discoverServers()"><i class="fa fa-search"></i>
+                            Discover servers</button>
                     </div>
 
                     <div class="search">
                         <input id="serverSearch" placeholder="Filter servers..." oninput="filterServers()">
-                        <button class="btn btn-ghost" onclick="document.getElementById('serverSearch').value='';filterServers();">✖</button>
+                        <button class="btn btn-ghost"
+                            onclick="document.getElementById('serverSearch').value='';filterServers();">✖</button>
                     </div>
 
                     <div id="serverList" class="server-list"></div>
@@ -57,21 +55,24 @@
 
                 <!-- Mobile Tab -->
                 <div id="tab-mobile" class="tab-content">
-                        <div class="card-header">
+                    <div class="card-header">
                         <div>
                             <div class="card-title">Android devices</div>
-                            <div class="card-subtitle">Find connected phones and tablets with ADB debugging enabled.</div>
+                            <div class="card-subtitle">Find connected phones and tablets with ADB debugging enabled.
+                            </div>
                         </div>
                         <div class="card-pill">Mobile</div>
                     </div>
 
                     <div class="controls">
-                        <button class="btn btn-primary" onclick="discoverAndroidDevices()"><i class="fa fa-search"></i> Discover devices</button>
+                        <button class="btn btn-primary" onclick="discoverAndroidDevices()"><i class="fa fa-search"></i>
+                            Discover devices</button>
                     </div>
 
                     <div class="search">
                         <input id="deviceSearch" placeholder="Filter devices..." oninput="filterAndroidDevices()">
-                        <button class="btn btn-ghost" onclick="document.getElementById('deviceSearch').value='';filterAndroidDevices();">✖</button>
+                        <button class="btn btn-ghost"
+                            onclick="document.getElementById('deviceSearch').value='';filterAndroidDevices();">✖</button>
                     </div>
 
                     <div id="deviceList" class="server-list"></div>
@@ -85,17 +86,16 @@
         </div>
     </div>
 
-    <div id="view-screen" class="view-screen" style="display: none;">
+    <div id="view-screen" class="view-screen">
         <div id="screenHeader">
             <div class="header-el">
-                <button class="btn btn-ghost btn-wit" onclick="disconnectAndBack()"><i class="fa fa-arrow-left"></i>
+                <button class="btn btn-ghost btn-wit btn-space" onclick="disconnectAndBack()"><i class="fa fa-arrow-left"></i>
                     <t>Back</t>
                 </button>
-                <button class="btn btn-ghost btn-wit btn-space" onclick="toggleControls()"><i
-                        class="fa fa-cogs"></i>
+                <button class="btn btn-ghost btn-wit" onclick="toggleControls()"><i class="fa fa-cogs"></i>
                     <t>Controls</t>
                 </button>
-                <button class="btn btn-ghost btn-wit btn-space" onclick="toggleKeyboardPanel()"><i
+                <button class="btn btn-ghost btn-wit" onclick="toggleKeyboardPanel()"><i
                         class="fa fa-keyboard-o"></i>
                     <t>Keyboard</t>
                 </button>
@@ -104,7 +104,7 @@
                     <t>Fullscreen</t>
                 </button>
             </div>
-            <button class="btn btn-ghost" id="hide-panel-btn" onclick="togglePanel()"><i
+            <button class="btn btn-ghost" id="hide-panel-btn" onclick="togglePanel(this)"><i
                     class="fa fa-chevron-down"></i></button>
         </div>
 
@@ -115,30 +115,32 @@
             </div>
 
             <div class="control-section" id="qualitySection">
-                    <div class="control-title"><i class="fa fa-image"></i> Quality</div>
-                    <input type="range" id="qualitySlider" class="quality-slider" min="0" max="95" value="0" step="5"
-                        oninput="onQualitySliderChange(event)">
-                    <div class="quality-meta">
-                        <span>Auto</span><span id="qualityValue">Auto</span><span>95</span>
-                    </div>
+                <div class="control-title"><i class="fa fa-image"></i> Quality</div>
+                <input type="range" id="qualitySlider" class="quality-slider" min="0" max="95" value="0" step="5"
+                    oninput="onQualitySliderChange(event)">
+                <div class="quality-meta">
+                    <span>Auto</span><span id="qualityValue">Auto</span><span>95</span>
                 </div>
+            </div>
 
-                <div class="control-section" id="throttleSection">
-                    <div class="control-title"><i class="fa fa-tachometer"></i> Throttle</div>
-                    <input type="range" id="throttleSlider" class="quality-slider" min="0" max="200" value="0" step="10"
-                        oninput="onThrottleSliderChange(event)">
-                    <div class="quality-meta">
-                        <span>Auto</span><span id="throttleValue">Auto</span><span>200 ms</span>
-                    </div>
+            <div class="control-section" id="throttleSection">
+                <div class="control-title"><i class="fa fa-tachometer"></i> Throttle</div>
+                <input type="range" id="throttleSlider" class="quality-slider" min="0" max="200" value="0" step="10"
+                    oninput="onThrottleSliderChange(event)">
+                <div class="quality-meta">
+                    <span>Auto</span><span id="throttleValue">Auto</span><span>200 ms</span>
                 </div>
             </div>
         </div>
 
         <div class="bottom-panel" id="bottomPanel">
             <div class="panel-toolbar">
-                <button class="btn btn-ghost active" data-tab="mouse" onclick="showKeyboardPanelTab('mouse')">Mouse</button>
-                <button class="btn btn-ghost" data-tab="keyboard" onclick="showKeyboardPanelTab('keyboard')">Keyboard</button>
-                <button class="btn btn-ghost" data-tab="navigation" onclick="showKeyboardPanelTab('navigation')">Navigation</button>
+                <button class="btn btn-ghost active" data-tab="mouse"
+                    onclick="showKeyboardPanelTab('mouse')">Mouse</button>
+                <button class="btn btn-ghost" data-tab="keyboard"
+                    onclick="showKeyboardPanelTab('keyboard')">Keyboard</button>
+                <button class="btn btn-ghost" data-tab="navigation"
+                    onclick="showKeyboardPanelTab('navigation')">Navigation</button>
             </div>
             <div class="panel-content">
                 <div class="panel-tab active" id="panel-mouse">
@@ -146,7 +148,8 @@
                         <div class="control-title"><i class="fa fa-mouse-pointer"></i> Mouse</div>
                         <div class="mouse-grid">
                             <button class="big-btn" title="Left click" onclick="sendMouseClick('left')">Left</button>
-                            <button class="big-btn" title="Middle click" onclick="sendMouseClick('middle')">Middle</button>
+                            <button class="big-btn" title="Middle click"
+                                onclick="sendMouseClick('middle')">Middle</button>
                             <button class="big-btn" title="Right click" onclick="sendMouseClick('right')">Right</button>
                         </div>
                     </div>
@@ -155,7 +158,8 @@
                     <div class="control-section">
                         <div class="control-title"><i class="fa fa-keyboard-o"></i> Keyboard</div>
                         <div class="kbd-area">
-                            <input type="text" id="keyboardInput" class="keyboard-input" placeholder="Click to type..." autocomplete="off">
+                            <input type="text" id="keyboardInput" class="keyboard-input" placeholder="Click to type..."
+                                autocomplete="off">
                             <div class="key-helpers">
                                 <button class="btn btn-ghost" onclick="sendKey('esc')">Esc</button>
                                 <button class="btn btn-ghost" onclick="sendKey('tab')">Tab</button>
@@ -194,7 +198,8 @@
             <div id="modalServerInfo" class="server-info"></div>
             <form id="passwordForm" onsubmit="submitPasswordModal(event)">
                 <label for="passwordInput">Password</label>
-                <input id="passwordInput" type="password" autocomplete="current-password" placeholder="Server password" required>
+                <input id="passwordInput" type="password" autocomplete="current-password" placeholder="Server password"
+                    required>
                 <div class="modal-actions">
                     <button type="button" class="btn btn-ghost" onclick="cancelPasswordModal()">Cancel</button>
                     <button type="submit" class="btn btn-primary">Connect</button>
@@ -252,14 +257,6 @@
             const rightPanel = document.getElementById('rightPanel');
             if (rightPanel && !rightPanel.classList.contains('collapsed')) {
                 rightPanel.classList.add('collapsed');
-            }
-            const viewScreen = document.getElementById('view-screen');
-            const viewConnect = document.getElementById('view-connect');
-            if (viewScreen) {
-                viewScreen.style.display = 'none';
-            }
-            if (viewConnect) {
-                viewConnect.style.display = 'block';
             }
         });
 
@@ -727,6 +724,7 @@
                 if (data && data.server_id && selectedServer && data.server_id === selectedServer) {
                     statusDiv.className = 'status';
                     statusDiv.textContent = 'Connecting via WebRTC...';
+                    showScreenView();
                     startWebRTCSession();
                 }
             } catch (e) { }
@@ -1019,10 +1017,15 @@
             tabs.forEach(el => el.style.display = el.id === `panel-${tabName}` ? 'block' : 'none');
         }
 
-        function togglePanel() {
+        function togglePanel(btn=null) {
+            if (!btn || btn.disabled) return;
             const rp = document.getElementById('screenHeader');
             if (!rp) return;
             rp.classList.toggle('collapsed');
+            if (btn) {
+                btn.disabled = true;
+                setTimeout(() => { btn.disabled = false; }, 300);
+            }
         }
 
         function sendMouseClick(button) {
