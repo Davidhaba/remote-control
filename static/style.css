@@ -70,6 +70,121 @@ body::before {
     align-items: start;
 }
 
+.tabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 18px;
+    padding: 6px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.tab-btn {
+    flex: 1;
+    padding: 12px 14px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    color: var(--muted);
+    font-weight: 700;
+    border-radius: 999px;
+    transition: all 0.2s ease;
+}
+
+.tab-btn.active {
+    color: #fff;
+    background: linear-gradient(135deg, rgba(124, 58, 237, 0.22), rgba(34, 211, 238, 0.16));
+    box-shadow: 0 14px 30px rgba(34, 211, 238, 0.08);
+}
+
+.tab-content {
+    display: none;
+}
+
+.tab-content.active {
+    display: block;
+}
+
+.android-controls {
+    display: none;
+}
+
+.android-controls.active {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.btn-group {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.btn-small {
+    padding: 8px 12px;
+    font-size: 12px;
+    flex: 1;
+    min-width: 60px;
+}
+
+.modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(4, 10, 20, 0.82);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    backdrop-filter: blur(6px);
+}
+
+.modal-backdrop.active {
+    display: flex;
+}
+
+.modal-content {
+    background: rgba(10, 16, 30, 0.98);
+    color: #f4f7ff;
+    padding: 24px;
+    border-radius: 20px;
+    width: min(460px, 92%);
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.modal-content h2 {
+    margin: 0 0 14px;
+    font-size: 22px;
+    letter-spacing: -0.03em;
+}
+
+.modal-content label {
+    display: block;
+    margin-bottom: 8px;
+    font-size: 13px;
+    color: var(--muted);
+}
+
+.modal-content input {
+    width: 100%;
+    padding: 14px 16px;
+    margin-bottom: 18px;
+    border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.04);
+    color: inherit;
+    box-sizing: border-box;
+}
+
+.modal-actions {
+    display: flex;
+    gap: 12px;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+}
+
 .card {
     background: var(--card-bg);
     border-radius: 22px;
@@ -307,13 +422,15 @@ h2 {
 #screenHeader {
     display: flex;
     position: fixed;
-    left: 0;
-    right: 0;
+    left: 18px;
     top: 18px;
     height: 68px;
+    width: auto;
+    min-width: 260px;
+    max-width: calc(100% - 80px);
     background: rgba(7, 17, 33, 0.92);
-    padding: 0 18px;
-    border-radius: 0 0 18px 18px;
+    padding: 0 14px;
+    border-radius: 0 18px 18px 0;
     z-index: 10;
     overflow: hidden;
     transition: transform .28s ease, backdrop-filter .28s ease;
@@ -321,11 +438,11 @@ h2 {
 }
 
 #screenHeader.collapsed {
-    transform: translateY(-100%);
+    transform: translateX(-95%);
 }
 
 #screenHeader.collapsed #hide-panel-btn i {
-    transform: rotate(-90deg);
+    transform: rotate(0deg);
 }
 
 .header-el {
