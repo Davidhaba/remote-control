@@ -55,6 +55,9 @@ def connect():
     if not server_id or not socket_id:
         return jsonify({'error': 'Missing server selection'}), 400
 
+    if not password or not str(password).strip():
+        return jsonify({'error': 'Password is required'}), 400
+
     browser_sessions[socket_id] = {
         'server_id': server_id,
         'socket_id': socket_id,

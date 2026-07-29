@@ -210,6 +210,52 @@ def relay_heartbeat():
         time.sleep(5)
 
 
+def relay_frame_sender():
+    while True:
+        try:
+            if not relay_connected or not authorized_browsers:
+                time.sleep(0.25)
+                continue
+
+            frame = capture_screen_dxgi()
+            if frame is None:
+                time.sleep(0.25)
+                continue
+
+            try:
+                if use_manual_quality and manual_quality is not None:
+                    try:
+                        quality = int(manual_quality)
+                    except Exception:
+                        quality = 70
+                else:
+                    quality = 70
+                _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
+            except Exception:
+                time.sleep(0.25)
+                continue
+
+            encoded_frame = base64.b64encode(buffer).decode('ascii')
+            with cursor_lock:
+                cursor_b64 = cursor_cache.get('b64')
+                hotspot_x = cursor_cache.get('hx', 0)
+                hotspot_y = cursor_cache.get('hy', 0)
+                cursor_fmt = cursor_cache.get('fmt', 'png')
+
+            for browser_sid in list(authorized_browsers.keys()):
+                relay_socket.emit('server_frame', {
+                    'browser_sid': browser_sid,
+                    'frame': encoded_frame,
+                    'cursorImage': cursor_b64,
+                    'cursorHotspotX': hotspot_x,
+                    'cursorHotspotY': hotspot_y,
+                    'cursorFormat': cursor_fmt,
+                })
+        except Exception:
+            pass
+        time.sleep(0.1)
+
+
 def _cleanup_authorized_browsers():
     while True:
         try:
@@ -276,13 +322,20 @@ def on_relay_command(data):
 
 if args.password is None:
     try:
-        entered_password = input('Set a password for remote access (leave empty to disable password): ').strip()
-        server_password = entered_password or None
+        while True:
+            entered_password = input('Set a password for remote access: ').strip()
+            if entered_password:
+                server_password = entered_password
+                break
+            print('Password cannot be empty. Please enter a non-empty password.')
     except KeyboardInterrupt:
-        print('\nNo password set.')
-        server_password = None
+        print('\nPassword is required. Exiting.')
+        sys.exit(1)
 else:
-    server_password = args.password
+    if not args.password.strip():
+        print('Error: password cannot be empty.')
+        sys.exit(1)
+    server_password = args.password.strip()
 
 manual_quality = None
 use_manual_quality = False
@@ -714,9 +767,11 @@ port = 1
 cursor_thread = threading.Thread(target=capture_cursor_worker, daemon=True)
 tcp_thread = threading.Thread(target=tcp_server, daemon=True)
 udp_thread = threading.Thread(target=udp_broadcast_listener, daemon=True)
+relay_frame_thread = threading.Thread(target=relay_frame_sender, daemon=True)
 cursor_thread.start()
 tcp_thread.start()
 udp_thread.start()
+relay_frame_thread.start()
 connect_to_relay()
 try:
     threading.Thread(target=_cleanup_authorized_browsers, daemon=True).start()

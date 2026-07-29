@@ -392,17 +392,23 @@
             selectedServer = address;
             currentDeviceType = type;
 
-            const password = window.prompt('Enter password for this server (leave empty if none)', '');
+            const password = window.prompt('Enter password for this server', '');
             if (password === null) {
                 statusDiv.className = 'status';
                 statusDiv.textContent = 'Cancelled';
+                return;
+            }
+            const trimmedPassword = password.trim();
+            if (!trimmedPassword) {
+                statusDiv.className = 'status';
+                statusDiv.textContent = 'Password is required';
                 return;
             }
 
             fetch('/api/connect', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ server_id: address, socket_id: socket.id, type: 'desktop', password })
+                body: JSON.stringify({ server_id: address, socket_id: socket.id, type: 'desktop', password: trimmedPassword })
             })
                 .then(res => res.json())
                 .then(data => {
@@ -428,17 +434,23 @@
             if (element) element.classList.add('selected');
             currentDeviceType = 'android';
 
-            const password = window.prompt('Enter password for this server (leave empty if none)', '');
+            const password = window.prompt('Enter password for this server', '');
             if (password === null) {
                 statusDiv.className = 'status';
                 statusDiv.textContent = 'Cancelled';
+                return;
+            }
+            const trimmedPassword = password.trim();
+            if (!trimmedPassword) {
+                statusDiv.className = 'status';
+                statusDiv.textContent = 'Password is required';
                 return;
             }
 
             fetch('/api/connect', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ server_id: deviceId, socket_id: socket.id, type: 'android', password })
+                body: JSON.stringify({ server_id: deviceId, socket_id: socket.id, type: 'android', password: trimmedPassword })
             })
                 .then(res => res.json())
                 .then(data => {
