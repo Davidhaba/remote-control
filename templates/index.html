@@ -9,6 +9,9 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script>
+        try { window.RC_VERBOSE = new URLSearchParams(location.search).get('rc_verbose') === '1'; } catch (e) { window.RC_VERBOSE = false; }
+    </script>
 </head>
 
 <body>
@@ -423,7 +426,7 @@
             })
                 .then(res => res.json())
                 .then(data => {
-                    console.log('[browser] connect response', data);
+                    if (window.RC_VERBOSE) console.log('[browser] connect response', data);
                     if (data.status === 'connected') {
                         statusDiv.className = 'status';
                         statusDiv.textContent = 'Waiting for server authorization...';
@@ -517,7 +520,7 @@
             webrtcChannel = channel;
 
             channel.onopen = () => {
-                console.log('[browser] datachannel open');
+                if (window.RC_VERBOSE) console.log('[browser] datachannel open');
                 webrtcReady = true;
                 const statusDiv = document.getElementById('status');
                 if (statusDiv) {
@@ -528,7 +531,7 @@
             };
 
             channel.onmessage = (event) => {
-                console.log('[browser] datachannel message event', typeof event.data, event.data?.length || 0);
+                if (window.RC_VERBOSE) console.log('[browser] datachannel message event', typeof event.data, event.data?.length || 0);
                 if (!event.data) return;
                 try {
                     let text = null;
@@ -727,7 +730,6 @@
                 if (data && data.server_id && selectedServer && data.server_id === selectedServer) {
                     statusDiv.className = 'status';
                     statusDiv.textContent = 'Connecting via WebRTC...';
-                    showScreenView();
                     startWebRTCSession();
                 }
             } catch (e) { }
@@ -805,7 +807,6 @@
                 updateCursorDisplay();
 
                 if (currentDeviceType === 'android') {
-                    // For Android, tap on move
                     return;
                 }
 
@@ -846,7 +847,6 @@
             canvas.addEventListener('wheel', (e) => {
                 e.preventDefault();
                 if (currentDeviceType === 'android') {
-                    // No scroll for Android
                     return;
                 }
                 const clicks = e.deltaY > 0 ? -1 : 1;
@@ -897,7 +897,7 @@
                 }
                 if (e.key === 'Backspace') {
                     e.preventDefault();
-                    sendCommand({ type: 'key', key_code: 67 }); // DEL key
+                    sendCommand({ type: 'key', key_code: 67 });
                     return;
                 }
             });
@@ -967,18 +967,11 @@
             }
             resetControlPanels();
 
-            // Show/hide controls based on device type
-            const desktopControls = document.getElementById('desktop-controls');
-            const androidControls = document.getElementById('android-controls');
-
+            const qualitySection = document.getElementById('qualitySection');
             if (currentDeviceType === 'android') {
-                desktopControls.style.display = 'none';
-                androidControls.classList.add('active');
-                document.getElementById('qualitySection').style.display = 'none';
+                if (qualitySection) qualitySection.style.display = 'none';
             } else {
-                desktopControls.style.display = 'block';
-                androidControls.classList.remove('active');
-                document.getElementById('qualitySection').style.display = 'block';
+                if (qualitySection) qualitySection.style.display = 'block';
             }
 
             const rp = document.getElementById('rightPanel');
