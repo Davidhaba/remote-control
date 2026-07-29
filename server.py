@@ -15,7 +15,8 @@ import asyncio
 from urllib.parse import urlparse, parse_qs
 from ctypes import wintypes
 import socketio
-from aiortc import RTCPeerConnection, RTCSessionDescription, RTCIceCandidate
+from aiortc import RTCPeerConnection, RTCSessionDescription, RTCIceCandidate, RTCConfiguration, RTCIceServer
+from aiortc.sdp import candidate_from_sdp
 try:
     import pyautogui
 except Exception:
@@ -183,18 +184,21 @@ if not args.server_id:
 
 relay_socket = socketio.Client(logger=False, engineio_logger=False)
 relay_connected = False
-authorized_browsers = {}
 webrtc_sessions = {}
 webrtc_sessions_lock = threading.Lock()
+webrtc_loop = None
+webrtc_loop_thread = None
+webrtc_loop_ready = None
 AUTH_TIMEOUT = 60 * 30
 
 
 def connect_to_relay():
     global relay_socket, relay_connected
     try:
+        print(f'[server] connecting to relay {args.relay_url}')
         relay_socket.connect(args.relay_url, transports=['websocket'])
         relay_connected = True
-        print(f'[relay] direct_host={get_local_ip()} direct_port={port}')
+        print(f'[server] relay connected, direct_host={get_local_ip()} direct_port={port}')
         relay_socket.emit('register_server', {
             'server_id': args.server_id,
             'name': socket.gethostname(),
@@ -219,97 +223,17 @@ def relay_heartbeat():
         time.sleep(5)
 
 
+def _create_webrtc_event_loop():
+    loop = asyncio.new_event_loop()
+    def loop_runner():
+        asyncio.set_event_loop(loop)
+        loop.run_forever()
+    thread = threading.Thread(target=loop_runner, daemon=True)
+    thread.start()
+    return loop, thread
+
+
 frame_seq = 0
-latest_payload = None
-payload_lock = threading.Lock()
-
-
-def relay_frame_sender():
-    global frame_seq, latest_payload
-    while True:
-        try:
-            if not relay_connected or not authorized_browsers:
-                time.sleep(0.25)
-                continue
-
-            frame = capture_screen_dxgi()
-            if frame is None:
-                time.sleep(0.25)
-                continue
-
-            try:
-                if use_manual_quality and manual_quality is not None:
-                    try:
-                        quality = int(manual_quality)
-                    except Exception:
-                        quality = 70
-                else:
-                    quality = 70
-                _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
-            except Exception:
-                time.sleep(0.25)
-                continue
-
-            encoded_frame = base64.b64encode(buffer).decode('ascii')
-            with cursor_lock:
-                cursor_b64 = cursor_cache.get('b64')
-                hotspot_x = cursor_cache.get('hx', 0)
-                hotspot_y = cursor_cache.get('hy', 0)
-                cursor_fmt = cursor_cache.get('fmt', 'png')
-
-            frame_seq += 1
-            payload = {
-                'browser_sid': None,
-                'frame_id': frame_seq,
-                'frame': encoded_frame,
-                'cursorImage': cursor_b64,
-                'cursorHotspotX': hotspot_x,
-                'cursorHotspotY': hotspot_y,
-                'cursorFormat': cursor_fmt,
-            }
-
-            with payload_lock:
-                latest_payload = payload
-        except Exception:
-            pass
-        time.sleep(0.1)
-
-
-def relay_frame_transmitter():
-    global latest_payload
-    while True:
-        try:
-            if not relay_connected or not authorized_browsers:
-                time.sleep(0.25)
-                continue
-
-            with payload_lock:
-                payload = latest_payload
-                latest_payload = None
-
-            if not payload:
-                time.sleep(0.05)
-                continue
-
-            for browser_sid in list(authorized_browsers.keys()):
-                frame_payload = payload.copy()
-                frame_payload['browser_sid'] = browser_sid
-                relay_socket.emit('server_frame', frame_payload)
-        except Exception:
-            pass
-        time.sleep(0.05)
-
-
-def _cleanup_authorized_browsers():
-    while True:
-        try:
-            now = time.time()
-            for sid, exp in list(authorized_browsers.items()):
-                if exp <= now:
-                    del authorized_browsers[sid]
-        except Exception:
-            pass
-        time.sleep(30)
 
 
 @relay_socket.on('request_session')
@@ -317,8 +241,10 @@ def on_request_session(data):
     data = data or {}
     browser_sid = data.get('browser_sid')
     req_password = data.get('password')
+    print(f'[server] request_session browser_sid={browser_sid}')
     if server_password:
         if not req_password or req_password != server_password:
+            print('[server] auth failed for browser', browser_sid)
             if browser_sid:
                 relay_socket.emit('session_denied', {
                     'browser_sid': browser_sid,
@@ -328,40 +254,8 @@ def on_request_session(data):
             return
 
     if browser_sid:
-        try:
-            authorized_browsers[browser_sid] = time.time() + AUTH_TIMEOUT
-        except Exception:
-            pass
+        print('[server] authorizing browser', browser_sid)
         relay_socket.emit('session_ready', {'browser_sid': browser_sid, 'server_id': args.server_id})
-
-
-@relay_socket.on('relay_command')
-def on_relay_command(data):
-    data = data or {}
-    cmd = data.get('cmd')
-    browser_sid = data.get('browser_sid')
-    is_auth = False
-    if browser_sid:
-        exp = authorized_browsers.get(browser_sid)
-        if exp and exp > time.time():
-            is_auth = True
-        else:
-            # cleanup if expired
-            authorized_browsers.pop(browser_sid, None)
-
-    if not is_auth:
-        try:
-            relay_socket.emit('session_denied', {
-                'browser_sid': browser_sid,
-                'server_id': args.server_id,
-                'reason': 'not_authorized'
-            })
-        except Exception:
-            pass
-        return
-
-    if cmd:
-        execute_command(cmd)
 
 
 @relay_socket.on('end_session')
@@ -369,15 +263,55 @@ def on_end_session(data):
     data = data or {}
     browser_sid = data.get('browser_sid')
     if browser_sid:
-        authorized_browsers.pop(browser_sid, None)
+        with webrtc_sessions_lock:
+            webrtc_sessions.pop(browser_sid, None)
 
 
 @relay_socket.on('session_denied')
 def on_session_denied(data):
     data = data or {}
     browser_sid = data.get('browser_sid')
+    print(f'[server] session_denied browser_sid={browser_sid} data={data}')
     if browser_sid:
-        authorized_browsers.pop(browser_sid, None)
+        with webrtc_sessions_lock:
+            webrtc_sessions.pop(browser_sid, None)
+
+
+@relay_socket.on('connect')
+def on_relay_connect():
+    print('[server] relay socket connected')
+
+
+@relay_socket.on('disconnect')
+def on_relay_disconnect():
+    print('[server] relay socket disconnected')
+
+
+def _build_candidate(candidate_data):
+    try:
+        candidate_sdp = None
+        if isinstance(candidate_data, dict):
+            candidate_sdp = candidate_data.get('candidate')
+            if isinstance(candidate_sdp, dict):
+                candidate_sdp = candidate_sdp.get('candidate')
+        elif isinstance(candidate_data, str):
+            candidate_sdp = candidate_data
+
+        if not candidate_sdp:
+            return None
+
+        candidate_sdp = candidate_sdp.strip()
+        ice_candidate = candidate_from_sdp(candidate_sdp)
+
+        if isinstance(candidate_data, dict):
+            if candidate_data.get('sdpMid') is not None:
+                ice_candidate.sdpMid = candidate_data.get('sdpMid')
+            if candidate_data.get('sdpMLineIndex') is not None:
+                ice_candidate.sdpMLineIndex = candidate_data.get('sdpMLineIndex')
+        return ice_candidate
+    except Exception as exc:
+        print(f'[server] build candidate failed candidate_data={candidate_data} exc={exc}')
+        return None
 
 
 @relay_socket.on('webrtc_offer')
@@ -385,8 +319,29 @@ def on_webrtc_offer(data):
     data = data or {}
     browser_sid = data.get('browser_sid')
     offer = data.get('offer')
+    print(f'[server] received webrtc_offer browser_sid={browser_sid} offer_present={bool(offer)}')
     if not browser_sid or not offer:
         return
+
+    with webrtc_sessions_lock:
+        session = webrtc_sessions.get(browser_sid)
+        if not session:
+            webrtc_sessions[browser_sid] = {
+                'pc': None,
+                'browser_sid': browser_sid,
+                'channel': None,
+                'open': False,
+                'candidate_queue': [],
+                'loop': None,
+                'remote_description_set': False,
+            }
+        else:
+            session.setdefault('candidate_queue', [])
+            if 'loop' not in session:
+                session['loop'] = None
+            if 'remote_description_set' not in session:
+                session['remote_description_set'] = False
+
     threading.Thread(target=lambda: _run_webrtc_offer(browser_sid, offer), daemon=True).start()
 
 
@@ -396,41 +351,95 @@ def on_webrtc_candidate(data):
     browser_sid = data.get('browser_sid')
     candidate = data.get('candidate')
     target = (data.get('target') or 'browser').lower()
-    if not browser_sid or not candidate or target != 'browser':
+    print(f'[server] webrtc_candidate browser_sid={browser_sid} target={target} candidate_present={bool(candidate)}')
+    if not browser_sid or not candidate or target != 'server':
         return
+
     with webrtc_sessions_lock:
         session = webrtc_sessions.get(browser_sid)
-    if not session:
-        return
-    try:
-        if isinstance(candidate, dict):
-            candidate_obj = RTCIceCandidate(
-                candidate=candidate.get('candidate'),
-                sdpMid=candidate.get('sdpMid'),
-                sdpMLineIndex=candidate.get('sdpMLineIndex'),
-            )
-            session['pc'].addIceCandidate(candidate_obj)
-        else:
-            session['pc'].addIceCandidate(candidate)
-    except Exception:
-        pass
+        if not session:
+            print('[server] buffering candidate before session created', browser_sid)
+            webrtc_sessions[browser_sid] = {
+                'pc': None,
+                'browser_sid': browser_sid,
+                'channel': None,
+                'open': False,
+                'candidate_queue': [candidate],
+                'loop': None,
+                'remote_description_set': False,
+            }
+            return
+
+        if session.get('pc') is None or session.get('loop') is None or not session.get('remote_description_set', False):
+            session.setdefault('candidate_queue', []).append(candidate)
+            print('[server] queued candidate until PC exists or remote description set', browser_sid)
+            return
+
+        ice_candidate = _build_candidate(candidate)
+        if ice_candidate is None:
+            print('[server] candidate parse failed', browser_sid)
+            return
+
+        try:
+            asyncio.run_coroutine_threadsafe(session['pc'].addIceCandidate(ice_candidate), session['loop']).result(timeout=10)
+            print(f'[server] added ICE candidate from browser browser_sid={browser_sid}')
+        except Exception as exc:
+            print('[server] addIceCandidate failed', exc)
 
 
 def _run_webrtc_offer(browser_sid, offer):
     async def _async_handle_offer():
-        pc = RTCPeerConnection()
-        session = {'pc': pc, 'browser_sid': browser_sid, 'channel': None, 'open': False}
+        pc = RTCPeerConnection(configuration=RTCConfiguration([
+            RTCIceServer(urls=['stun:stun.l.google.com:19302']),
+        ]))
         with webrtc_sessions_lock:
-            webrtc_sessions[browser_sid] = session
+            session = webrtc_sessions.get(browser_sid)
+            if not session:
+                session = {
+                    'pc': None,
+                    'browser_sid': browser_sid,
+                    'channel': None,
+                    'open': False,
+                    'candidate_queue': [],
+                    'loop': None,
+                    'remote_description_set': False,
+                }
+                webrtc_sessions[browser_sid] = session
+            session['pc'] = pc
+            session['channel'] = None
+            session['open'] = False
+            session.setdefault('candidate_queue', [])
+            session['loop'] = asyncio.get_running_loop()
+            session['remote_description_set'] = False
 
         @pc.on("datachannel")
         def on_datachannel(channel):
             session['channel'] = channel
 
+            def start_frame_sender():
+                if session.get('frame_task') is not None:
+                    try:
+                        done = session['frame_task'].done()
+                    except Exception:
+                        done = True
+                    if not done:
+                        return
+                if channel.readyState != 'open':
+                    return
+                session['open'] = True
+                coro = _send_webrtc_frames(browser_sid)
+                try:
+                    loop = asyncio.get_running_loop()
+                    if loop is session['loop']:
+                        session['frame_task'] = asyncio.ensure_future(coro)
+                    else:
+                        session['frame_task'] = asyncio.run_coroutine_threadsafe(coro, session['loop'])
+                except RuntimeError:
+                    session['frame_task'] = asyncio.run_coroutine_threadsafe(coro, session['loop'])
+
             @channel.on("open")
             def on_open():
-                session['open'] = True
-                threading.Thread(target=lambda: _send_webrtc_frames(browser_sid), daemon=True).start()
+                start_frame_sender()
 
             @channel.on("message")
             def on_message(message):
@@ -442,14 +451,23 @@ def _run_webrtc_offer(browser_sid, offer):
                     data = json.loads(payload)
                     if isinstance(data, dict):
                         execute_command(data)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    print(f'[server] datachannel message failed {exc}')
 
             @channel.on("close")
             def on_close():
                 session['open'] = False
+                task = session.get('frame_task')
+                if task is not None:
+                    try:
+                        task.cancel()
+                    except Exception:
+                        pass
                 with webrtc_sessions_lock:
                     webrtc_sessions.pop(browser_sid, None)
+
+            if channel.readyState == 'open':
+                start_frame_sender()
 
         @pc.on("icecandidate")
         def on_icecandidate(event):
@@ -460,12 +478,22 @@ def _run_webrtc_offer(browser_sid, offer):
                         'candidate': event.candidate.to_json(),
                         'target': 'browser',
                     })
-                except Exception:
-                    pass
+                except Exception as exc:
+                    print('[server] emit candidate failed', exc)
+
+        @pc.on('connectionstatechange')
+        def on_connectionstatechange():
+            print(f'[server] connectionstatechange browser_sid={browser_sid} state={pc.connectionState}')
 
         await pc.setRemoteDescription(RTCSessionDescription(sdp=offer['sdp'], type=offer['type']))
+        with webrtc_sessions_lock:
+            session = webrtc_sessions.get(browser_sid)
+            if session:
+                session['remote_description_set'] = True
+        print(f'[server] remote description set for browser_sid={browser_sid}')
         answer = await pc.createAnswer()
         await pc.setLocalDescription(answer)
+        print(f'[server] local description set for browser_sid={browser_sid}')
         relay_socket.emit('webrtc_answer', {
             'browser_sid': browser_sid,
             'answer': {
@@ -474,25 +502,64 @@ def _run_webrtc_offer(browser_sid, offer):
             },
         })
 
-    try:
-        asyncio.run(_async_handle_offer())
-    except Exception as exc:
-        print(f'[webrtc] offer failed: {exc}')
+        queued_candidates = []
+        with webrtc_sessions_lock:
+            session = webrtc_sessions.get(browser_sid)
+            if session:
+                session['pc'] = pc
+                queued_candidates = session.pop('candidate_queue', [])
+        for queued_candidate in queued_candidates:
+            ice_candidate = _build_candidate(queued_candidate)
+            if ice_candidate is None:
+                print('[server] queued candidate parse failed', browser_sid)
+                continue
+            try:
+                await pc.addIceCandidate(ice_candidate)
+            except Exception as exc:
+                print('[server] addIceCandidate failed for queued candidate', exc)
+
+    global webrtc_loop, webrtc_loop_thread
+    if webrtc_loop is None:
+        webrtc_loop, webrtc_loop_thread = _create_webrtc_event_loop()
+
+    with webrtc_sessions_lock:
+        session = webrtc_sessions.get(browser_sid)
+        if session is None:
+            session = {
+                'pc': None,
+                'browser_sid': browser_sid,
+                'channel': None,
+                'open': False,
+                'candidate_queue': [],
+                'loop': webrtc_loop,
+            }
+            webrtc_sessions[browser_sid] = session
+        else:
+            session['loop'] = webrtc_loop
+
+    future = asyncio.run_coroutine_threadsafe(_async_handle_offer(), webrtc_loop)
+    def _offer_done(f):
+        try:
+            f.result()
+        except Exception as exc:
+            print(f'[webrtc] offer task failed: {exc}')
+    future.add_done_callback(_offer_done)
 
 
-def _send_webrtc_frames(browser_sid):
+async def _send_webrtc_frames(browser_sid):
+    global frame_seq
     while True:
         try:
             with webrtc_sessions_lock:
                 session = webrtc_sessions.get(browser_sid)
                 channel = session.get('channel') if session else None
                 is_open = bool(session and session.get('open')) if session else False
-            if not is_open or not channel:
+            if not is_open or not channel or channel.readyState != 'open':
                 return
 
             frame = capture_screen_dxgi()
             if frame is None:
-                time.sleep(0.05)
+                await asyncio.sleep(0.05)
                 continue
 
             if use_manual_quality and manual_quality is not None:
@@ -520,9 +587,24 @@ def _send_webrtc_frames(browser_sid):
                 'cursorHotspotY': hotspot_y,
                 'cursorFormat': cursor_fmt,
             }
-            channel.send(json.dumps(payload))
-            time.sleep(0.05)
-        except Exception:
+            frame_seq += 1
+            message = json.dumps(payload)
+            try:
+                buffered = getattr(channel, 'bufferedAmount', None)
+                if buffered is not None and buffered > 65536:
+                    while getattr(channel, 'bufferedAmount', 0) > 32768:
+                        await asyncio.sleep(0.05)
+
+                if getattr(channel, 'bufferedAmountLowThreshold', None) is not None:
+                    channel.bufferedAmountLowThreshold = 32768
+
+                channel.send(message)
+            except Exception as exc:
+                print(f'[server] frame send failed browser_sid={browser_sid} exc={exc}')
+                break
+            await asyncio.sleep(0.12)
+        except Exception as exc:
+            print(f'[server] _send_webrtc_frames exception browser_sid={browser_sid} exc={exc}')
             break
 
 
@@ -1034,19 +1116,11 @@ port_ready = threading.Event()
 cursor_thread = threading.Thread(target=capture_cursor_worker, daemon=True)
 tcp_thread = threading.Thread(target=tcp_server, daemon=True)
 udp_thread = threading.Thread(target=udp_broadcast_listener, daemon=True)
-relay_frame_thread = threading.Thread(target=relay_frame_sender, daemon=True)
-relay_transmitter_thread = threading.Thread(target=relay_frame_transmitter, daemon=True)
 cursor_thread.start()
 tcp_thread.start()
 port_ready.wait()
 udp_thread.start()
-relay_frame_thread.start()
-relay_transmitter_thread.start()
 connect_to_relay()
-try:
-    threading.Thread(target=_cleanup_authorized_browsers, daemon=True).start()
-except Exception:
-    pass
 try:
     tcp_thread.join()
     udp_thread.join()

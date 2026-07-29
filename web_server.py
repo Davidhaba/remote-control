@@ -165,6 +165,7 @@ def handle_register_server(data):
         return
 
     server_id = data.get('server_id') or f"server-{request.sid[:8]}"
+    print(f'[web_server] register_server {server_id} sid={request.sid}')
     existing = registered_servers.get(server_id)
     if existing and existing.get('sid') != request.sid and time.time() - existing.get('last_seen', 0) < SERVER_TIMEOUT:
         return
@@ -189,40 +190,28 @@ def handle_server_heartbeat(data):
         registered_servers[server_id]['last_seen'] = time.time()
 
 
-@socketio.on('server_frame')
-def handle_server_frame(data):
-    data = data or {}
-    browser_sid = data.get('browser_sid')
-    if not browser_sid:
-        return
-    payload = {
-        'frame_id': data.get('frame_id'),
-        'frame': data.get('frame'),
-        'cursorImage': data.get('cursorImage'),
-        'cursorHotspotX': data.get('cursorHotspotX', 0),
-        'cursorHotspotY': data.get('cursorHotspotY', 0),
-        'cursorFormat': data.get('cursorFormat', 'raw'),
-    }
-    socketio.emit('frame', payload, room=browser_sid)
-
-
 @socketio.on('webrtc_offer')
 def handle_webrtc_offer(data):
     data = data or {}
     browser_sid = data.get('browser_sid')
+    print(f'[web_server] webrtc_offer browser_sid={browser_sid} server_id={data.get("server_id")}')
     if not browser_sid:
         return
-    server_id = browser_sessions.get(browser_sid, {}).get('server_id')
-    if not server_id:
+    session = browser_sessions.get(browser_sid)
+    if not session:
+        print('[web_server] no browser session for offer', browser_sid)
         return
+    server_id = session.get('server_id')
     server = registered_servers.get(server_id)
     if not server or not server.get('sid'):
+        print('[web_server] no registered server for offer', server_id)
         return
     socketio.emit('webrtc_offer', data, room=server['sid'])
 
 
 @socketio.on('webrtc_answer')
 def handle_webrtc_answer(data):
+    print(f'[web_server] webrtc_answer browser_sid={data.get("browser_sid")}')
     data = data or {}
     browser_sid = data.get('browser_sid')
     if not browser_sid:
@@ -237,12 +226,16 @@ def handle_webrtc_candidate(data):
     if not browser_sid:
         return
     target = (data.get('target') or 'browser').lower()
+    print(f'[web_server] webrtc_candidate browser_sid={browser_sid} target={target}')
     if target == 'server':
-        server_id = browser_sessions.get(browser_sid, {}).get('server_id')
-        if server_id:
-            server = registered_servers.get(server_id)
-            if server and server.get('sid'):
-                socketio.emit('webrtc_candidate', data, room=server['sid'])
+        session = browser_sessions.get(browser_sid)
+        if not session:
+            print('[web_server] no browser session for candidate', browser_sid)
+            return
+        server_id = session.get('server_id')
+        server = registered_servers.get(server_id)
+        if server and server.get('sid'):
+            socketio.emit('webrtc_candidate', data, room=server['sid'])
         return
     socketio.emit('webrtc_candidate', data, room=browser_sid)
 
@@ -273,45 +266,6 @@ def handle_session_denied_from_server(data):
     except Exception:
         pass
     socketio.emit('session_denied', {'server_id': data.get('server_id'), 'reason': data.get('reason')}, room=browser_sid)
-
-
-@socketio.on('command')
-def handle_command(data):
-    data = data or {}
-    cmd_data = data.get('cmd')
-    browser_sid = request.sid
-    if not cmd_data:
-        return
-
-    session = browser_sessions.get(browser_sid)
-    if not session:
-        return
-
-    server_id = session.get('server_id')
-    server = registered_servers.get(server_id)
-    if not server or not server.get('sid'):
-        return
-
-    if isinstance(cmd_data, dict) and cmd_data.get('type') == 'disconnect_request':
-        socketio.emit('end_session', {'browser_sid': browser_sid, 'server_id': server_id}, room=server['sid'])
-        browser_sessions.pop(browser_sid, None)
-        return
-
-    if not session.get('authorized'):
-        try:
-            socketio.emit('session_denied', {'server_id': server_id, 'reason': 'not_authorized'}, room=browser_sid)
-        except Exception:
-            pass
-        return
-
-    if not server.get('password_protected'):
-        try:
-            socketio.emit('session_denied', {'server_id': server_id, 'reason': 'server_not_secure'}, room=browser_sid)
-        except Exception:
-            pass
-        return
-
-    socketio.emit('relay_command', {'browser_sid': browser_sid, 'server_id': server_id, 'cmd': cmd_data}, room=server['sid'])
 
 
 @socketio.on('disconnect')

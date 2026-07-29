@@ -202,22 +202,21 @@
     </div>
 
     <script>
-        const socket = io();
+        const socket = io({ transports: ['polling'] });
+        socket.on('connect_error', (err) => {
+            console.error('Socket connect error', err);
+        });
+
         let isConnected = false;
         let selectedServer = null;
         let currentDeviceType = null;
         let canvas = null;
         let ctx = null;
-        let directSocket = null;
-        let directStreamConnected = false;
-        let directOpened = false;
-        let pendingDirectHost = null;
-        let pendingDirectPort = null;
-        let pendingDirectPassword = null;
         let webrtcPeer = null;
         let webrtcChannel = null;
         let webrtcReady = false;
-        let webrtcFallbackTimer = null;
+        let pendingRemoteCandidates = [];
+        let remoteDescriptionSet = false;
 
         let lastMouseX = 0, lastMouseY = 0;
         let isMouseDown = false;
@@ -406,23 +405,17 @@
             })
                 .then(res => res.json())
                 .then(data => {
+                    console.log('[browser] connect response', data);
                     if (data.status === 'connected') {
-                        if (data.direct_host && data.direct_port) {
-                            pendingDirectHost = data.direct_host;
-                            pendingDirectPort = data.direct_port;
-                            pendingDirectPassword = trimmedPassword;
-                            statusDiv.className = 'status';
-                            statusDiv.textContent = 'Waiting for server authorization...';
-                        } else {
-                            statusDiv.className = 'status';
-                            statusDiv.textContent = 'Waiting for server...';
-                        }
+                        statusDiv.className = 'status';
+                        statusDiv.textContent = 'Waiting for server authorization...';
                     } else {
                         statusDiv.className = 'status';
                         statusDiv.textContent = data.error || 'Connection failed';
                     }
                 })
-                .catch(() => {
+                .catch((err) => {
+                    console.error('[browser] connect request failed', err);
                     statusDiv.className = 'status';
                     statusDiv.textContent = 'Connection error';
                 });
@@ -440,108 +433,8 @@
             showPasswordModal(deviceId, 'android', element);
         }
 
-        function connectDirectly(host, port, password) {
-            if (directSocket) {
-                try {
-                    directSocket.close();
-                } catch (e) { }
-            }
-
-            const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
-            const wsUrl = `${wsProto}://${host}:${port}/ws?password=${encodeURIComponent(password)}`;
-            directSocket = new WebSocket(wsUrl);
-
-            directSocket.binaryType = 'arraybuffer';
-
-            directSocket.onopen = () => {
-                directStreamConnected = true;
-                directOpened = true;
-                const statusDiv = document.getElementById('status');
-                if (statusDiv) {
-                    statusDiv.className = 'status connected';
-                    statusDiv.textContent = 'Connected directly';
-                }
-                showScreenView();
-            };
-
-            directSocket.onmessage = (event) => {
-                if (!event.data) {
-                    return;
-                }
-                if (typeof event.data === 'string') {
-                    try {
-                        const payload = JSON.parse(event.data);
-                        if (payload && payload.type === 'cursor') {
-                            if (payload.cursorRemoved) {
-                                remoteCursorImg.style.display = 'none';
-                                cursorImageAvailable = false;
-                            } else if (payload.cursorImage && currentDeviceType !== 'android') {
-                                const src = 'data:image/png;base64,' + payload.cursorImage;
-                                if (src !== lastCursorImgSrc) {
-                                    remoteCursorImg.src = src;
-                                    lastCursorImgSrc = src;
-                                    cursorHotspotX = payload.cursorHotspotX || 0;
-                                    cursorHotspotY = payload.cursorHotspotY || 0;
-                                    cursorImageAvailable = true;
-                                }
-                                remoteCursorImg.style.display = 'block';
-                            }
-                            updateCursorDisplay();
-                        }
-                    } catch (err) {
-                        console.warn('WebSocket JSON parse failed', err);
-                    }
-                    return;
-                }
-
-                const arrayBuffer = event.data;
-                const blob = new Blob([arrayBuffer], { type: 'image/jpeg' });
-                const img = new Image();
-                img.onload = () => {
-                    screenWidth = img.width;
-                    screenHeight = img.height;
-                    canvas.width = img.width;
-                    canvas.height = img.height;
-                    ctx.drawImage(img, 0, 0);
-                    updateCursorDisplay();
-                };
-                img.src = URL.createObjectURL(blob);
-            };
-
-            directSocket.onclose = () => {
-                directStreamConnected = false;
-                if (directSocket) {
-                    try { directSocket.onopen = null; directSocket.onmessage = null; directSocket.onclose = null; directSocket.onerror = null; } catch (e) { }
-                    directSocket = null;
-                }
-                const statusDiv = document.getElementById('status');
-                if (statusDiv) {
-                    statusDiv.className = 'status';
-                    statusDiv.textContent = 'Direct stream closed';
-                }
-                if (isConnected && directOpened) {
-                    disconnectAndBack();
-                }
-            };
-
-            directSocket.onerror = () => {
-                const statusDiv = document.getElementById('status');
-                if (statusDiv) {
-                    statusDiv.className = 'status';
-                    statusDiv.textContent = 'Direct connection error';
-                }
-            };
-        }
-
-        function clearWebRTCFallback() {
-            if (webrtcFallbackTimer) {
-                clearTimeout(webrtcFallbackTimer);
-                webrtcFallbackTimer = null;
-            }
-        }
 
         function closeWebRTCConnection() {
-            clearWebRTCFallback();
             if (webrtcChannel) {
                 try { webrtcChannel.close(); } catch (e) { }
             }
@@ -551,6 +444,8 @@
             webrtcChannel = null;
             webrtcPeer = null;
             webrtcReady = false;
+            remoteDescriptionSet = false;
+            pendingRemoteCandidates = [];
         }
 
         function startWebRTCSession() {
@@ -558,25 +453,12 @@
             const pc = new RTCPeerConnection({ iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }] });
             webrtcPeer = pc;
             webrtcReady = false;
-            clearWebRTCFallback();
-
-            webrtcFallbackTimer = setTimeout(() => {
-                if (!webrtcReady && isConnected) {
-                    const statusDiv = document.getElementById('status');
-                    if (statusDiv) {
-                        statusDiv.className = 'status connected';
-                        statusDiv.textContent = 'Connected via relay fallback';
-                    }
-                    showScreenView();
-                }
-            }, 2500);
 
             const channel = pc.createDataChannel('control');
             webrtcChannel = channel;
 
             channel.onopen = () => {
                 webrtcReady = true;
-                clearWebRTCFallback();
                 const statusDiv = document.getElementById('status');
                 if (statusDiv) {
                     statusDiv.className = 'status connected';
@@ -588,38 +470,70 @@
             channel.onmessage = (event) => {
                 if (!event.data) return;
                 try {
-                    const payload = typeof event.data === 'string' ? JSON.parse(event.data) : null;
-                    if (!payload || payload.type !== 'frame') return;
-                    if (payload.frame) {
-                        const img = new Image();
-                        img.onload = () => {
-                            screenWidth = img.width;
-                            screenHeight = img.height;
-                            canvas.width = img.width;
-                            canvas.height = img.height;
-                            ctx.drawImage(img, 0, 0);
-                            if (payload.cursorImage && currentDeviceType !== 'android') {
-                                const src = 'data:image/png;base64,' + payload.cursorImage;
-                                if (src !== lastCursorImgSrc) {
-                                    remoteCursorImg.src = src;
-                                    lastCursorImgSrc = src;
-                                    cursorHotspotX = payload.cursorHotspotX || 0;
-                                    cursorHotspotY = payload.cursorHotspotY || 0;
-                                    cursorImageAvailable = true;
-                                }
-                                remoteCursorImg.style.display = 'block';
-                            } else if (payload.cursorRemoved) {
-                                remoteCursorImg.style.display = 'none';
-                                cursorImageAvailable = false;
+                    let text = null;
+                    if (typeof event.data === 'string') {
+                        text = event.data;
+                    } else if (event.data instanceof ArrayBuffer) {
+                        text = new TextDecoder('utf-8').decode(event.data);
+                    } else if (event.data instanceof Blob) {
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                            try {
+                                const payload2 = JSON.parse(reader.result);
+                                handleFramePayload(payload2);
+                            } catch (err) {
+                                console.error('Failed parse blob message', err);
                             }
-                            updateCursorDisplay();
                         };
-                        img.src = 'data:image/jpeg;base64,' + payload.frame;
+                        reader.readAsText(event.data);
+                        return;
                     }
+                    const payload = text ? JSON.parse(text) : null;
+                    if (!payload || payload.type !== 'frame') return;
+                    handleFramePayload(payload);
                 } catch (err) {
                     console.warn('WebRTC frame parse failed', err);
                 }
             };
+
+            channel.onclose = () => {
+            };
+
+            channel.onerror = (err) => {
+                console.error('Datachannel error', err);
+            };
+
+            function handleFramePayload(payload) {
+                if (payload.frame) {
+                    const img = new Image();
+                    img.onload = () => {
+                        screenWidth = img.width;
+                        screenHeight = img.height;
+                        canvas.width = img.width;
+                        canvas.height = img.height;
+                        ctx.drawImage(img, 0, 0);
+                        if (payload.cursorImage && currentDeviceType !== 'android') {
+                            const src = 'data:image/png;base64,' + payload.cursorImage;
+                            if (src !== lastCursorImgSrc) {
+                                remoteCursorImg.src = src;
+                                lastCursorImgSrc = src;
+                                cursorHotspotX = payload.cursorHotspotX || 0;
+                                cursorHotspotY = payload.cursorHotspotY || 0;
+                                cursorImageAvailable = true;
+                            }
+                            remoteCursorImg.style.display = 'block';
+                        } else if (payload.cursorRemoved) {
+                            remoteCursorImg.style.display = 'none';
+                            cursorImageAvailable = false;
+                        }
+                        updateCursorDisplay();
+                    };
+                    img.onerror = (err) => {
+                        console.error('[browser] image load failed', err, payload.frame?.length);
+                    };
+                    img.src = 'data:image/jpeg;base64,' + payload.frame;
+                }
+            }
 
             pc.onicecandidate = (event) => {
                 if (event.candidate) {
@@ -634,7 +548,6 @@
             pc.onconnectionstatechange = () => {
                 if (pc.connectionState === 'connected') {
                     webrtcReady = true;
-                    clearWebRTCFallback();
                     const statusDiv = document.getElementById('status');
                     if (statusDiv) {
                         statusDiv.className = 'status connected';
@@ -644,11 +557,16 @@
                 } else if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
                     const statusDiv = document.getElementById('status');
                     if (statusDiv) {
-                        statusDiv.className = 'status connected';
-                        statusDiv.textContent = 'Connected via relay fallback';
+                        statusDiv.className = 'status';
+                        statusDiv.textContent = 'Connection lost';
                     }
-                    showScreenView();
                 }
+            };
+
+            pc.onsignalingstatechange = () => {
+            };
+
+            pc.onicegatheringstatechange = () => {
             };
 
             pc.createOffer().then(offer => pc.setLocalDescription(offer)).then(() => {
@@ -656,7 +574,8 @@
                     browser_sid: socket.id,
                     offer: pc.localDescription.toJSON(),
                 });
-            }).catch(() => {
+            }).catch((err) => {
+                console.error('CreateOffer failed', err);
                 const statusDiv = document.getElementById('status');
                 if (statusDiv) {
                     statusDiv.className = 'status';
@@ -667,12 +586,32 @@
 
         socket.on('webrtc_answer', (data) => {
             if (!webrtcPeer || !data || data.browser_sid !== socket.id) return;
-            webrtcPeer.setRemoteDescription(new RTCSessionDescription(data.answer)).catch(() => {});
+            const answer = new RTCSessionDescription(data.answer);
+            webrtcPeer.setRemoteDescription(answer).then(() => {
+                remoteDescriptionSet = true;
+                if (pendingRemoteCandidates.length) {
+                    pendingRemoteCandidates.forEach(c => {
+                        webrtcPeer.addIceCandidate(new RTCIceCandidate(c)).catch(err => {
+                            console.error('[browser] addIceCandidate failed pending', err);
+                        });
+                    });
+                    pendingRemoteCandidates = [];
+                }
+            }).catch((err) => {
+                console.error('[browser] setRemoteDescription failed', err);
+            });
         });
 
         socket.on('webrtc_candidate', (data) => {
             if (!webrtcPeer || !data || data.browser_sid !== socket.id || !data.candidate) return;
-            webrtcPeer.addIceCandidate(new RTCIceCandidate(data.candidate)).catch(() => {});
+            const candidate = new RTCIceCandidate(data.candidate);
+            if (!remoteDescriptionSet) {
+                pendingRemoteCandidates.push(data.candidate);
+                return;
+            }
+            webrtcPeer.addIceCandidate(candidate).catch((err) => {
+                console.error('[browser] addIceCandidate failed', err);
+            });
         });
 
         let screenWidth = 1280, screenHeight = 720;
@@ -923,17 +862,7 @@
                     console.warn('WebRTC send failed', e);
                 }
             }
-            if (directStreamConnected && directSocket && directSocket.readyState === WebSocket.OPEN) {
-                try {
-                    directSocket.send(JSON.stringify(cmd));
-                    return;
-                } catch (e) {
-                    console.warn('Direct socket send failed', e);
-                }
-            }
-            if (isConnected) {
-                socket.emit('command', { cmd });
-            }
+            console.warn('Command dropped: WebRTC channel not open', cmd);
         }
 
         function onQualitySliderChange(e) {
@@ -986,11 +915,6 @@
 
         function disconnectAndBack() {
             closeWebRTCConnection();
-            if (directSocket) {
-                try { directSocket.close(); } catch (e) { }
-                directSocket = null;
-            }
-            directStreamConnected = false;
             try {
                 fetch('/api/disconnect', { method: 'POST' }).catch(() => { });
                 try { socket.emit('command', { cmd: { type: 'disconnect_request' } }); } catch (e) { }
