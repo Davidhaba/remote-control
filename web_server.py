@@ -77,7 +77,7 @@ def connect():
 
 @app.route('/api/disconnect', methods=['POST'])
 def api_disconnect():
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     socket_id = data.get('socket_id')
     if socket_id in browser_sessions:
         session = browser_sessions.pop(socket_id)
