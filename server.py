@@ -11,7 +11,7 @@ import sys
 import ctypes
 import uuid
 from ctypes import wintypes
-from flask_socketio import SocketIO
+import socketio
 try:
     import pyautogui
 except Exception:
@@ -169,7 +169,7 @@ FIXED_FRAME_HEIGHT = 720
 
 parser = argparse.ArgumentParser(description='Remote control server')
 parser.add_argument('--password', default=None, help='Optional password required for client authentication')
-parser.add_argument('--relay-url', default=os.environ.get('RELAY_URL', 'https://your-render-app.onrender.com'), help='Render Socket.IO relay URL')
+parser.add_argument('--relay-url', default=os.environ.get('RELAY_URL', 'https://remote-control-ee7w.onrender.com'), help='Render Socket.IO relay URL')
 parser.add_argument('--server-id', default=None, help='Unique ID for this server')
 args = parser.parse_args()
 
@@ -177,14 +177,14 @@ if not args.server_id:
     host_name = socket.gethostname().replace(' ', '-').lower()
     args.server_id = f"{host_name}-{uuid.uuid4().hex[:8]}"
 
-relay_socket = SocketIO(logger=False, engineio_logger=False, cors_allowed_origins='*')
+relay_socket = socketio.Client(logger=False, engineio_logger=False)
 relay_connected = False
 
 
 def connect_to_relay():
     global relay_socket, relay_connected
     try:
-        relay_socket.connect(args.relay_url, transports=['websocket'], namespaces=['/'])
+        relay_socket.connect(args.relay_url, transports=['websocket'])
         relay_connected = True
         relay_socket.emit('register_server', {
             'server_id': args.server_id,
@@ -212,8 +212,19 @@ def relay_heartbeat():
 def on_request_session(data):
     data = data or {}
     browser_sid = data.get('browser_sid')
+    req_password = data.get('password')
+    if server_password:
+        if not req_password or req_password != server_password:
+            if browser_sid:
+                relay_socket.emit('session_denied', {
+                    'browser_sid': browser_sid,
+                    'server_id': args.server_id,
+                    'reason': 'auth_failed'
+                })
+            return
+
     if browser_sid:
-        relay_socket.emit('session_ready', {'browser_sid': browser_sid, 'server_id': args.server_id}, to=browser_sid)
+        relay_socket.emit('session_ready', {'browser_sid': browser_sid, 'server_id': args.server_id})
 
 
 @relay_socket.on('relay_command')
