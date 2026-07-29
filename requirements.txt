@@ -2,3 +2,5 @@ Flask
 Flask-SocketIO
 gunicorn
 gevent
+aiortc
+av

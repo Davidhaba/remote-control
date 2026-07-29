@@ -206,6 +206,47 @@ def handle_server_frame(data):
     socketio.emit('frame', payload, room=browser_sid)
 
 
+@socketio.on('webrtc_offer')
+def handle_webrtc_offer(data):
+    data = data or {}
+    browser_sid = data.get('browser_sid')
+    if not browser_sid:
+        return
+    server_id = browser_sessions.get(browser_sid, {}).get('server_id')
+    if not server_id:
+        return
+    server = registered_servers.get(server_id)
+    if not server or not server.get('sid'):
+        return
+    socketio.emit('webrtc_offer', data, room=server['sid'])
+
+
+@socketio.on('webrtc_answer')
+def handle_webrtc_answer(data):
+    data = data or {}
+    browser_sid = data.get('browser_sid')
+    if not browser_sid:
+        return
+    socketio.emit('webrtc_answer', data, room=browser_sid)
+
+
+@socketio.on('webrtc_candidate')
+def handle_webrtc_candidate(data):
+    data = data or {}
+    browser_sid = data.get('browser_sid')
+    if not browser_sid:
+        return
+    target = (data.get('target') or 'browser').lower()
+    if target == 'server':
+        server_id = browser_sessions.get(browser_sid, {}).get('server_id')
+        if server_id:
+            server = registered_servers.get(server_id)
+            if server and server.get('sid'):
+                socketio.emit('webrtc_candidate', data, room=server['sid'])
+        return
+    socketio.emit('webrtc_candidate', data, room=browser_sid)
+
+
 @socketio.on('session_ready')
 def handle_session_ready_from_server(data):
     data = data or {}

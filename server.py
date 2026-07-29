@@ -11,9 +11,11 @@ import sys
 import ctypes
 import uuid
 import hashlib
+import asyncio
 from urllib.parse import urlparse, parse_qs
 from ctypes import wintypes
 import socketio
+from aiortc import RTCPeerConnection, RTCSessionDescription, RTCIceCandidate
 try:
     import pyautogui
 except Exception:
@@ -182,6 +184,8 @@ if not args.server_id:
 relay_socket = socketio.Client(logger=False, engineio_logger=False)
 relay_connected = False
 authorized_browsers = {}
+webrtc_sessions = {}
+webrtc_sessions_lock = threading.Lock()
 AUTH_TIMEOUT = 60 * 30
 
 
@@ -374,6 +378,152 @@ def on_session_denied(data):
     browser_sid = data.get('browser_sid')
     if browser_sid:
         authorized_browsers.pop(browser_sid, None)
+
+
+@relay_socket.on('webrtc_offer')
+def on_webrtc_offer(data):
+    data = data or {}
+    browser_sid = data.get('browser_sid')
+    offer = data.get('offer')
+    if not browser_sid or not offer:
+        return
+    threading.Thread(target=lambda: _run_webrtc_offer(browser_sid, offer), daemon=True).start()
+
+
+@relay_socket.on('webrtc_candidate')
+def on_webrtc_candidate(data):
+    data = data or {}
+    browser_sid = data.get('browser_sid')
+    candidate = data.get('candidate')
+    target = (data.get('target') or 'browser').lower()
+    if not browser_sid or not candidate or target != 'browser':
+        return
+    with webrtc_sessions_lock:
+        session = webrtc_sessions.get(browser_sid)
+    if not session:
+        return
+    try:
+        if isinstance(candidate, dict):
+            candidate_obj = RTCIceCandidate(
+                candidate=candidate.get('candidate'),
+                sdpMid=candidate.get('sdpMid'),
+                sdpMLineIndex=candidate.get('sdpMLineIndex'),
+            )
+            session['pc'].addIceCandidate(candidate_obj)
+        else:
+            session['pc'].addIceCandidate(candidate)
+    except Exception:
+        pass
+
+
+def _run_webrtc_offer(browser_sid, offer):
+    async def _async_handle_offer():
+        pc = RTCPeerConnection()
+        session = {'pc': pc, 'browser_sid': browser_sid, 'channel': None, 'open': False}
+        with webrtc_sessions_lock:
+            webrtc_sessions[browser_sid] = session
+
+        @pc.on("datachannel")
+        def on_datachannel(channel):
+            session['channel'] = channel
+
+            @channel.on("open")
+            def on_open():
+                session['open'] = True
+                threading.Thread(target=lambda: _send_webrtc_frames(browser_sid), daemon=True).start()
+
+            @channel.on("message")
+            def on_message(message):
+                try:
+                    if isinstance(message, bytes):
+                        payload = message.decode('utf-8', errors='ignore')
+                    else:
+                        payload = message
+                    data = json.loads(payload)
+                    if isinstance(data, dict):
+                        execute_command(data)
+                except Exception:
+                    pass
+
+            @channel.on("close")
+            def on_close():
+                session['open'] = False
+                with webrtc_sessions_lock:
+                    webrtc_sessions.pop(browser_sid, None)
+
+        @pc.on("icecandidate")
+        def on_icecandidate(event):
+            if event.candidate:
+                try:
+                    relay_socket.emit('webrtc_candidate', {
+                        'browser_sid': browser_sid,
+                        'candidate': event.candidate.to_json(),
+                        'target': 'browser',
+                    })
+                except Exception:
+                    pass
+
+        await pc.setRemoteDescription(RTCSessionDescription(sdp=offer['sdp'], type=offer['type']))
+        answer = await pc.createAnswer()
+        await pc.setLocalDescription(answer)
+        relay_socket.emit('webrtc_answer', {
+            'browser_sid': browser_sid,
+            'answer': {
+                'type': pc.localDescription.type,
+                'sdp': pc.localDescription.sdp,
+            },
+        })
+
+    try:
+        asyncio.run(_async_handle_offer())
+    except Exception as exc:
+        print(f'[webrtc] offer failed: {exc}')
+
+
+def _send_webrtc_frames(browser_sid):
+    while True:
+        try:
+            with webrtc_sessions_lock:
+                session = webrtc_sessions.get(browser_sid)
+                channel = session.get('channel') if session else None
+                is_open = bool(session and session.get('open')) if session else False
+            if not is_open or not channel:
+                return
+
+            frame = capture_screen_dxgi()
+            if frame is None:
+                time.sleep(0.05)
+                continue
+
+            if use_manual_quality and manual_quality is not None:
+                try:
+                    quality = int(manual_quality)
+                except Exception:
+                    quality = 70
+            else:
+                quality = 70
+
+            _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
+            encoded_frame = base64.b64encode(buffer).decode('ascii')
+            with cursor_lock:
+                cursor_b64 = cursor_cache.get('b64')
+                hotspot_x = cursor_cache.get('hx', 0)
+                hotspot_y = cursor_cache.get('hy', 0)
+                cursor_fmt = cursor_cache.get('fmt', 'png')
+
+            payload = {
+                'type': 'frame',
+                'frame_id': frame_seq,
+                'frame': encoded_frame,
+                'cursorImage': cursor_b64,
+                'cursorHotspotX': hotspot_x,
+                'cursorHotspotY': hotspot_y,
+                'cursorFormat': cursor_fmt,
+            }
+            channel.send(json.dumps(payload))
+            time.sleep(0.05)
+        except Exception:
+            break
 
 
 if args.password is None:

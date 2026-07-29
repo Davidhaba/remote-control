@@ -214,6 +214,9 @@
         let pendingDirectHost = null;
         let pendingDirectPort = null;
         let pendingDirectPassword = null;
+        let webrtcPeer = null;
+        let webrtcChannel = null;
+        let webrtcReady = false;
 
         let lastMouseX = 0, lastMouseY = 0;
         let isMouseDown = false;
@@ -529,6 +532,117 @@
             };
         }
 
+        function closeWebRTCConnection() {
+            if (webrtcChannel) {
+                try { webrtcChannel.close(); } catch (e) { }
+            }
+            if (webrtcPeer) {
+                try { webrtcPeer.close(); } catch (e) { }
+            }
+            webrtcChannel = null;
+            webrtcPeer = null;
+            webrtcReady = false;
+        }
+
+        function startWebRTCSession() {
+            if (webrtcPeer || !selectedServer) return;
+            const pc = new RTCPeerConnection({ iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }] });
+            webrtcPeer = pc;
+            webrtcReady = false;
+
+            const channel = pc.createDataChannel('control');
+            webrtcChannel = channel;
+
+            channel.onopen = () => {
+                webrtcReady = true;
+                const statusDiv = document.getElementById('status');
+                if (statusDiv) {
+                    statusDiv.className = 'status connected';
+                    statusDiv.textContent = 'Connected via WebRTC';
+                }
+                showScreenView();
+            };
+
+            channel.onmessage = (event) => {
+                if (!event.data) return;
+                try {
+                    const payload = typeof event.data === 'string' ? JSON.parse(event.data) : null;
+                    if (!payload || payload.type !== 'frame') return;
+                    if (payload.frame) {
+                        const img = new Image();
+                        img.onload = () => {
+                            screenWidth = img.width;
+                            screenHeight = img.height;
+                            canvas.width = img.width;
+                            canvas.height = img.height;
+                            ctx.drawImage(img, 0, 0);
+                            if (payload.cursorImage && currentDeviceType !== 'android') {
+                                const src = 'data:image/png;base64,' + payload.cursorImage;
+                                if (src !== lastCursorImgSrc) {
+                                    remoteCursorImg.src = src;
+                                    lastCursorImgSrc = src;
+                                    cursorHotspotX = payload.cursorHotspotX || 0;
+                                    cursorHotspotY = payload.cursorHotspotY || 0;
+                                    cursorImageAvailable = true;
+                                }
+                                remoteCursorImg.style.display = 'block';
+                            } else if (payload.cursorRemoved) {
+                                remoteCursorImg.style.display = 'none';
+                                cursorImageAvailable = false;
+                            }
+                            updateCursorDisplay();
+                        };
+                        img.src = 'data:image/jpeg;base64,' + payload.frame;
+                    }
+                } catch (err) {
+                    console.warn('WebRTC frame parse failed', err);
+                }
+            };
+
+            pc.onicecandidate = (event) => {
+                if (event.candidate) {
+                    socket.emit('webrtc_candidate', {
+                        browser_sid: socket.id,
+                        target: 'server',
+                        candidate: event.candidate.toJSON(),
+                    });
+                }
+            };
+
+            pc.onconnectionstatechange = () => {
+                if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+                    const statusDiv = document.getElementById('status');
+                    if (statusDiv) {
+                        statusDiv.className = 'status';
+                        statusDiv.textContent = 'WebRTC disconnected';
+                    }
+                }
+            };
+
+            pc.createOffer().then(offer => pc.setLocalDescription(offer)).then(() => {
+                socket.emit('webrtc_offer', {
+                    browser_sid: socket.id,
+                    offer: pc.localDescription.toJSON(),
+                });
+            }).catch(() => {
+                const statusDiv = document.getElementById('status');
+                if (statusDiv) {
+                    statusDiv.className = 'status';
+                    statusDiv.textContent = 'WebRTC setup failed';
+                }
+            });
+        }
+
+        socket.on('webrtc_answer', (data) => {
+            if (!webrtcPeer || !data || data.browser_sid !== socket.id) return;
+            webrtcPeer.setRemoteDescription(new RTCSessionDescription(data.answer)).catch(() => {});
+        });
+
+        socket.on('webrtc_candidate', (data) => {
+            if (!webrtcPeer || !data || data.browser_sid !== socket.id || !data.candidate) return;
+            webrtcPeer.addIceCandidate(new RTCIceCandidate(data.candidate)).catch(() => {});
+        });
+
         let screenWidth = 1280, screenHeight = 720;
         let lastCursorImgSrc = '';
         let lastFrameId = 0;
@@ -579,18 +693,9 @@
             try {
                 const statusDiv = document.getElementById('status');
                 if (data && data.server_id && selectedServer && data.server_id === selectedServer) {
-                    if (pendingDirectHost && pendingDirectPort && pendingDirectPassword) {
-                        statusDiv.className = 'status';
-                        statusDiv.textContent = 'Connecting directly...';
-                        connectDirectly(pendingDirectHost, pendingDirectPort, pendingDirectPassword);
-                        pendingDirectHost = null;
-                        pendingDirectPort = null;
-                        pendingDirectPassword = null;
-                        return;
-                    }
-                    statusDiv.className = 'status connected';
-                    statusDiv.textContent = 'Connected';
-                    showScreenView();
+                    statusDiv.className = 'status';
+                    statusDiv.textContent = 'Connecting via WebRTC...';
+                    startWebRTCSession();
                 }
             } catch (e) { }
         });
@@ -777,6 +882,14 @@
         }
 
         function sendCommand(cmd) {
+            if (webrtcReady && webrtcChannel && webrtcChannel.readyState === 'open') {
+                try {
+                    webrtcChannel.send(JSON.stringify(cmd));
+                    return;
+                } catch (e) {
+                    console.warn('WebRTC send failed', e);
+                }
+            }
             if (directStreamConnected && directSocket && directSocket.readyState === WebSocket.OPEN) {
                 try {
                     directSocket.send(JSON.stringify(cmd));
@@ -839,6 +952,7 @@
         }
 
         function disconnectAndBack() {
+            closeWebRTCConnection();
             if (directSocket) {
                 try { directSocket.close(); } catch (e) { }
                 directSocket = null;
