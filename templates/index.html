@@ -12,24 +12,30 @@
     <style>
         .tabs {
             display: flex;
-            gap: 10px;
-            margin-bottom: 15px;
-            border-bottom: 1px solid var(--border);
+            gap: 8px;
+            margin-bottom: 18px;
+            padding: 6px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 999px;
+            border: 1px solid rgba(255, 255, 255, 0.07);
         }
 
         .tab-btn {
-            padding: 10px 15px;
+            flex: 1;
+            padding: 12px 14px;
             border: none;
             background: transparent;
             cursor: pointer;
             color: var(--muted);
-            border-bottom: 3px solid transparent;
-            transition: all 0.3s;
+            font-weight: 700;
+            border-radius: 999px;
+            transition: all 0.2s ease;
         }
 
         .tab-btn.active {
-            color: var(--primary);
-            border-bottom-color: var(--primary);
+            color: #fff;
+            background: linear-gradient(135deg, rgba(124, 58, 237, 0.22), rgba(34, 211, 238, 0.16));
+            box-shadow: 0 14px 30px rgba(34, 211, 238, 0.08);
         }
 
         .tab-content {
@@ -66,11 +72,12 @@
         .modal-backdrop {
             position: fixed;
             inset: 0;
-            background: rgba(0, 0, 0, 0.55);
+            background: rgba(4, 10, 20, 0.82);
             display: none;
             align-items: center;
             justify-content: center;
             z-index: 1000;
+            backdrop-filter: blur(6px);
         }
 
         .modal-backdrop.active {
@@ -78,40 +85,42 @@
         }
 
         .modal-content {
-            background: #1a1a1a;
-            color: #fff;
-            padding: 20px;
-            border-radius: 14px;
-            width: min(420px, 90%);
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+            background: rgba(10, 16, 30, 0.98);
+            color: #f4f7ff;
+            padding: 24px;
+            border-radius: 20px;
+            width: min(460px, 92%);
+            box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+            border: 1px solid rgba(255, 255, 255, 0.08);
         }
 
         .modal-content h2 {
-            margin: 0 0 12px;
-            font-size: 18px;
+            margin: 0 0 14px;
+            font-size: 22px;
+            letter-spacing: -0.03em;
         }
 
         .modal-content label {
             display: block;
             margin-bottom: 8px;
             font-size: 13px;
-            color: #ccc;
+            color: var(--muted);
         }
 
         .modal-content input {
             width: 100%;
-            padding: 10px 12px;
-            margin-bottom: 14px;
-            border-radius: 10px;
-            border: 1px solid #333;
-            background: #111;
-            color: #fff;
+            padding: 14px 16px;
+            margin-bottom: 18px;
+            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            background: rgba(255, 255, 255, 0.04);
+            color: inherit;
             box-sizing: border-box;
         }
 
         .modal-actions {
             display: flex;
-            gap: 10px;
+            gap: 12px;
             justify-content: flex-end;
             flex-wrap: wrap;
         }
@@ -135,21 +144,21 @@
 
                 <!-- Desktop Tab -->
                 <div id="tab-desktop" class="tab-content active">
-                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-                        <h2 style="margin:0">Servers</h2>
-                        <div style="font-size:12px;color:var(--muted)">Local network</div>
+                        <div class="card-header">
+                        <div>
+                            <div class="card-title">Available servers</div>
+                            <div class="card-subtitle">Select a host from the local relay and connect securely.</div>
+                        </div>
+                        <div class="card-pill">Local network</div>
                     </div>
 
-                    <div class="controls" style="margin-top:10px">
-                        <button class="btn btn-primary" onclick="discoverServers()"><i class="fa fa-search"></i>
-                            Discover
-                            servers</button>
+                    <div class="controls">
+                        <button class="btn btn-primary" onclick="discoverServers()"><i class="fa fa-search"></i> Discover servers</button>
                     </div>
 
                     <div class="search">
                         <input id="serverSearch" placeholder="Filter servers..." oninput="filterServers()">
-                        <button class="btn"
-                            onclick="document.getElementById('serverSearch').value='';filterServers();">✖</button>
+                        <button class="btn btn-ghost" onclick="document.getElementById('serverSearch').value='';filterServers();">✖</button>
                     </div>
 
                     <div id="serverList" class="server-list"></div>
@@ -160,21 +169,21 @@
 
                 <!-- Mobile Tab -->
                 <div id="tab-mobile" class="tab-content">
-                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-                        <h2 style="margin:0">Devices</h2>
-                        <div style="font-size:12px;color:var(--muted)">Android</div>
+                        <div class="card-header">
+                        <div>
+                            <div class="card-title">Android devices</div>
+                            <div class="card-subtitle">Find connected phones and tablets with ADB debugging enabled.</div>
+                        </div>
+                        <div class="card-pill">Mobile</div>
                     </div>
 
-                    <div class="controls" style="margin-top:10px">
-                        <button class="btn btn-primary" onclick="discoverAndroidDevices()"><i class="fa fa-search"></i>
-                            Discover
-                            devices</button>
+                    <div class="controls">
+                        <button class="btn btn-primary" onclick="discoverAndroidDevices()"><i class="fa fa-search"></i> Discover devices</button>
                     </div>
 
                     <div class="search">
                         <input id="deviceSearch" placeholder="Filter devices..." oninput="filterAndroidDevices()">
-                        <button class="btn"
-                            onclick="document.getElementById('deviceSearch').value='';filterAndroidDevices();">✖</button>
+                        <button class="btn btn-ghost" onclick="document.getElementById('deviceSearch').value='';filterAndroidDevices();">✖</button>
                     </div>
 
                     <div id="deviceList" class="server-list"></div>
