@@ -298,6 +298,7 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     if ASYNC_MODE == 'gevent' and GEVENT_WEBSOCKET_AVAILABLE and WSGIServer is not None and WebSocketHandler is not None:
         print('[web_server] starting gevent websocket server on 0.0.0.0:%s' % port)
+        print('[web_server] you can access the web interface at http://localhost:%s' % port)
         WSGIServer(('0.0.0.0', port), app, handler_class=WebSocketHandler).serve_forever()
     else:
         socketio.run(

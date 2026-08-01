@@ -98,21 +98,23 @@
                 </div>
                 <div class="connection-overlay-actions">
                     <button class="btn btn-primary" id="retryConnectionBtn" onclick="retryConnection()">Retry</button>
-                    <button class="btn btn-ghost" id="closeConnectionOverlayBtn" onclick="disconnectAndBack()">Back</button>
+                    <button class="btn btn-ghost" id="hideConnectionOverlayBtn"
+                        onclick="hideConnectionOverlay()">Hide</button>
+                    <button class="btn btn-ghost" id="backConnectionBtn" onclick="disconnectAndBack()">Back</button>
                 </div>
             </div>
         </div>
 
         <div id="screenHeader">
             <div class="header-el" id="headerEl">
-                <button class="btn btn-ghost btn-wit" id="btnBack" onclick="disconnectAndBack()"><i class="fa fa-arrow-left"></i>
+                <button class="btn btn-ghost btn-wit" id="btnBack" onclick="disconnectAndBack()"><i
+                        class="fa fa-arrow-left"></i>
                     <t>Back</t>
                 </button>
                 <button class="btn btn-ghost btn-wit" onclick="toggleControls()"><i class="fa fa-cogs"></i>
                     <t>Controls</t>
                 </button>
-                <button class="btn btn-ghost btn-wit" onclick="toggleKeyboardPanel()"><i
-                        class="fa fa-keyboard-o"></i>
+                <button class="btn btn-ghost btn-wit" onclick="toggleKeyboardPanel()"><i class="fa fa-keyboard-o"></i>
                     <t>Keyboard</t>
                 </button>
                 <button class="btn btn-ghost btn-wit fullscreen-btn" onclick="toggleFullscreen()"><i
@@ -279,9 +281,10 @@
 
         function updateHeaderScrollbar() {
             const headerEl = document.getElementById('headerEl');
+            const headerScrollbar = document.querySelector('.header-scrollbar');
             const thumb = document.querySelector('.header-scrollbar-thumb');
             const track = document.querySelector('.header-scrollbar-track');
-            if (!headerEl || !thumb || !track) {
+            if (!headerScrollbar || !headerEl || !thumb || !track) {
                 return;
             }
 
@@ -290,6 +293,7 @@
             if (maxScroll <= 1) {
                 thumb.style.width = '0px';
                 thumb.style.left = '0px';
+                headerScrollbar.style.display = 'none';
                 return;
             }
 
@@ -298,6 +302,7 @@
             const progress = headerEl.scrollLeft / maxScroll;
             const left = progress * Math.max(0, trackWidth - thumbWidth);
 
+            headerScrollbar.style.display = 'block';
             thumb.style.width = thumbWidth + 'px';
             thumb.style.left = left + 'px';
             headerDragState.trackWidth = trackWidth;
@@ -400,9 +405,13 @@
             }
             window.addEventListener('pointermove', moveHeaderDrag);
             window.addEventListener('pointerup', endHeaderDrag);
-            updateHeaderScrollbar();
-            window.addEventListener('resize', updateHeaderScrollbar);
+            window.addEventListener('resize', () => {
+                updateHeaderWidth();
+                updateHeaderScrollbar();
+            });
             discoverServers();
+            updateHeaderWidth();
+            updateHeaderScrollbar();
         });
 
         function switchTab(tab) {
@@ -561,6 +570,7 @@
                 return;
             }
 
+            hideConnectionOverlay();
             retryPassword = trimmedPassword;
             retryServerId = selectedServer;
             retryServerType = currentDeviceType;
@@ -1224,7 +1234,8 @@
 
             const rp = document.getElementById('rightPanel');
             if (rp) rp.classList.add('collapsed');
-
+            updateHeaderWidth();
+            updateHeaderScrollbar();
             setupKeyboardInput();
         }
 
@@ -1265,15 +1276,38 @@
             tabs.forEach(el => el.style.display = el.id === `panel-${tabName}` ? 'block' : 'none');
         }
 
-        function togglePanel(btn=null) {
+        function togglePanel(btn = null) {
             if (!btn || btn.disabled) return;
             const rp = document.getElementById('screenHeader');
             if (!rp) return;
             rp.classList.toggle('collapsed');
+            updateHeaderWidth();
             if (btn) {
                 btn.disabled = true;
-                setTimeout(() => { btn.disabled = false; }, 300);
+                setTimeout(() => {
+                    btn.disabled = false;
+                    updateHeaderScrollbar();
+                }, 300);
             }
+        }
+
+        function updateHeaderWidth() {
+            const header = document.getElementById('screenHeader');
+            const headerEl = document.getElementById('headerEl');
+            const hideBtn = document.getElementById('hide-panel-btn');
+            if (!header || !headerEl) return;
+
+            if (header.classList.contains('collapsed')) {
+                header.style.setProperty('--header-width', '40px');
+                return;
+            }
+
+            const contentWidth = headerEl.scrollWidth;
+            const hideBtnWidth = hideBtn ? Math.max(40, hideBtn.getBoundingClientRect().width || parseFloat(getComputedStyle(hideBtn).width) || 40) : 40;
+            const viewportWidth = window.innerWidth;
+            const totalHeaderWidth = contentWidth + hideBtnWidth;
+            const maxWidth = Math.max(0, Math.min(totalHeaderWidth, viewportWidth));
+            header.style.setProperty('--header-width', `${maxWidth}px`);
         }
 
         function sendMouseClick(button) {

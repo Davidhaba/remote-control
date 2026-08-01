@@ -218,7 +218,7 @@ body {
 .btn-ghost {
     border: none;
     padding: 12px 14px;
-    border-radius: 0;
+    border-radius: 5px;
 }
 
 .btn,
@@ -483,6 +483,8 @@ h2 {
     justify-content: space-around;
     height: 100%;
     gap: 8px;
+    border: none;
+    border-radius: 0;
 }
 
 .btn-wit i {
@@ -520,12 +522,13 @@ h2 {
 }
 
 #screenHeader {
+    --header-width: 390px;
     display: flex;
     position: fixed;
     left: 0;
     top: 18px;
     height: 64px;
-    width: 415px;
+    width: var(--header-width, 390px);
     max-width: 100%;
     background: rgba(14, 20, 32, 0.96);
     padding: 0;
