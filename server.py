@@ -13,6 +13,8 @@ import ctypes
 import uuid
 import hashlib
 import asyncio
+import logging
+from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 from ctypes import wintypes
 import socketio
@@ -35,16 +37,56 @@ except Exception:
     Image = None
 
 VERBOSE = False
+LOG_DIR = Path(__file__).resolve().parent / 'logs'
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+DEBUG_LOG = LOG_DIR / 'debug.log'
+INFO_LOG = LOG_DIR / 'info.log'
+ERROR_LOG = LOG_DIR / 'error.log'
+
+DEBUG_LOGGER = logging.getLogger('remote_control.debug')
+INFO_LOGGER = logging.getLogger('remote_control.info')
+ERROR_LOGGER = logging.getLogger('remote_control.error')
+
+for logger in (DEBUG_LOGGER, INFO_LOGGER, ERROR_LOGGER):
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = False
+
+
+def _attach_file_handler(logger, path, level):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    for existing_handler in list(logger.handlers):
+        if isinstance(existing_handler, logging.FileHandler) and existing_handler.baseFilename == str(path):
+            return
+    handler = logging.FileHandler(path, encoding='utf-8')
+    handler.setLevel(level)
+    handler.setFormatter(logging.Formatter('%(asctime)s %(message)s'))
+    logger.addHandler(handler)
+
+
+_attach_file_handler(DEBUG_LOGGER, DEBUG_LOG, logging.DEBUG)
+_attach_file_handler(INFO_LOGGER, INFO_LOG, logging.INFO)
+_attach_file_handler(ERROR_LOGGER, ERROR_LOG, logging.ERROR)
+
+
+def _write_log(logger, message, level):
+    logger.log(level, message)
+
 
 def dbg(msg):
     if VERBOSE:
         print(f'[debug] {msg}')
+    _write_log(DEBUG_LOGGER, msg, logging.DEBUG)
+
 
 def info(msg):
     print(f'[info] {msg}')
+    _write_log(INFO_LOGGER, msg, logging.INFO)
+
 
 def error(msg):
     print(f'[error] {msg}')
+    _write_log(ERROR_LOGGER, msg, logging.ERROR)
 
 def loop_running(loop):
     try:
@@ -203,7 +245,14 @@ if not args.server_id:
     host_name = socket.gethostname().replace(' ', '-').lower()
     args.server_id = f"{host_name}-{uuid.uuid4().hex[:8]}"
 
-relay_socket = socketio.Client(logger=False, engineio_logger=False)
+relay_socket = socketio.Client(
+    logger=False,
+    engineio_logger=False,
+    reconnection=True,
+    reconnection_attempts=0,
+    reconnection_delay=1,
+    reconnection_delay_max=5,
+)
 relay_connected = False
 webrtc_sessions = {}
 webrtc_sessions_lock = threading.Lock()
@@ -212,24 +261,24 @@ webrtc_loop_thread = None
 webrtc_loop_ready = None
 AUTH_TIMEOUT = 60 * 30
 tray_icon = None
+shutdown_event = threading.Event()
 
 
 def connect_to_relay():
     global relay_socket, relay_connected
     try:
+        if shutdown_event.is_set():
+            return
+        if getattr(relay_socket, 'connected', False):
+            relay_connected = True
+            return
+
         dbg(f'connecting to relay {args.relay_url}')
+        try:
+            relay_socket.disconnect()
+        except Exception:
+            pass
         relay_socket.connect(args.relay_url, transports=['websocket'])
-        relay_connected = True
-        dbg(f'Relay connected, direct_host={get_local_ip()} direct_port={port}')
-        relay_socket.emit('register_server', {
-            'server_id': args.server_id,
-            'name': socket.gethostname(),
-            'hostname': socket.gethostname(),
-            'address': args.server_id,
-            'direct_host': get_local_ip(),
-            'direct_port': port,
-            'password_protected': bool(server_password),
-        })
     except Exception as e:
         relay_connected = False
         error(f'relay connection failed: {e}')
@@ -238,13 +287,17 @@ def connect_to_relay():
 def relay_reconnect_loop():
     while True:
         try:
-            if not relay_connected:
+            if shutdown_event.is_set():
+                break
+            if not relay_connected or not getattr(relay_socket, 'connected', False):
                 connect_to_relay()
                 if relay_connected:
                     threading.Thread(target=relay_heartbeat, daemon=True).start()
             time.sleep(5)
         except Exception as exc:
             error(f'relay reconnect loop error: {exc}')
+            if shutdown_event.is_set():
+                break
             time.sleep(5)
 
 
@@ -252,6 +305,8 @@ def relay_heartbeat():
     while True:
         try:
             global relay_connected
+            if shutdown_event.is_set():
+                break
             if relay_connected:
                 relay_socket.emit('server_heartbeat', {'server_id': args.server_id})
         except Exception as exc:
@@ -318,8 +373,22 @@ def on_session_denied(data):
 @relay_socket.on('connect')
 def on_relay_connect():
     global relay_connected
+    if shutdown_event.is_set():
+        return
     relay_connected = True
     info('relay socket connected')
+    dbg(f'relay connected, direct_host={get_local_ip()} direct_port={port}')
+    try:
+        relay_socket.emit('register_server', {
+            'server_id': args.server_id,
+            'name': socket.gethostname(),
+            'hostname': socket.gethostname(),
+            'address': args.server_id,
+            'direct_host': get_local_ip(),
+            'direct_port': port,
+        })
+    except Exception as exc:
+        error(f're-register server failed after reconnect: {exc}')
 
 
 @relay_socket.on('disconnect')
@@ -327,6 +396,8 @@ def on_relay_disconnect():
     global relay_connected
     relay_connected = False
     info('relay socket disconnected')
+    if shutdown_event.is_set():
+        return
     with webrtc_sessions_lock:
         session_ids = list(webrtc_sessions.keys())
     for sid in session_ids:
@@ -1240,7 +1311,16 @@ tcp_thread.start()
 port_ready.wait()
 udp_thread.start()
 threading.Thread(target=relay_reconnect_loop, daemon=True).start()
-shutdown_event = threading.Event()
+
+def open_logs_folder():
+    try:
+        if os.name == 'nt':
+            os.startfile(str(LOG_DIR))
+        else:
+            subprocess.Popen(['xdg-open', str(LOG_DIR)])
+    except Exception as exc:
+        error(f'failed to open logs folder: {exc}')
+
 
 def _signal_handler(signum, frame):
     info(f'signal {signum} received; shutting down')
@@ -1317,7 +1397,19 @@ try:
                 except Exception:
                     pass
 
-            icon = pystray.Icon('remote_control', img, 'Remote control server', menu=pystray.Menu(pystray.MenuItem('Quit', on_quit)))
+            def on_open_logs(icon, item):
+                dbg('tray open logs requested')
+                open_logs_folder()
+
+            icon = pystray.Icon(
+                'remote_control',
+                img,
+                'Remote control server',
+                menu=pystray.Menu(
+                    pystray.MenuItem('Open Logs Folder', on_open_logs),
+                    pystray.MenuItem('Quit', on_quit),
+                ),
+            )
             try:
                 tray_icon = icon
             except Exception:

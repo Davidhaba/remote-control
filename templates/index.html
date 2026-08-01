@@ -90,6 +90,19 @@
     </div>
 
     <div id="view-screen" class="view-screen">
+        <div id="connectionOverlay" class="connection-overlay" style="display:none;">
+            <div class="connection-overlay-card">
+                <div class="connection-overlay-title" id="connectionOverlayTitle">Connection lost</div>
+                <div class="connection-overlay-text" id="connectionOverlayText">
+                    The remote session was interrupted. Retry to reconnect.
+                </div>
+                <div class="connection-overlay-actions">
+                    <button class="btn btn-primary" id="retryConnectionBtn" onclick="retryConnection()">Retry</button>
+                    <button class="btn btn-ghost" id="closeConnectionOverlayBtn" onclick="disconnectAndBack()">Back</button>
+                </div>
+            </div>
+        </div>
+
         <div id="screenHeader">
             <div class="header-el" id="headerEl">
                 <button class="btn btn-ghost btn-wit" id="btnBack" onclick="disconnectAndBack()"><i class="fa fa-arrow-left"></i>
@@ -250,6 +263,9 @@
         let cursorHotspotX = 0, cursorHotspotY = 0;
         let cursorImageAvailable = false;
         let cursorScale = 1.0;
+        let retryPassword = '';
+        let retryServerId = null;
+        let retryServerType = null;
 
         const headerDragState = {
             active: false,
@@ -542,6 +558,11 @@
                 statusDiv.textContent = 'No server selected';
                 return;
             }
+
+            retryPassword = trimmedPassword;
+            retryServerId = selectedServer;
+            retryServerType = currentDeviceType;
+
             fetch('/api/connect', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -562,6 +583,74 @@
                     console.error('[browser] connect request failed', err);
                     statusDiv.className = 'status';
                     statusDiv.textContent = 'Connection error';
+                });
+        }
+
+        function showConnectionOverlay(title, message) {
+            const overlay = document.getElementById('connectionOverlay');
+            const titleEl = document.getElementById('connectionOverlayTitle');
+            const textEl = document.getElementById('connectionOverlayText');
+            if (!overlay || !titleEl || !textEl) return;
+            titleEl.textContent = title || 'Connection lost';
+            textEl.textContent = message || 'The remote session was interrupted. Retry to reconnect.';
+            overlay.style.display = 'flex';
+        }
+
+        function hideConnectionOverlay() {
+            const overlay = document.getElementById('connectionOverlay');
+            if (overlay) {
+                overlay.style.display = 'none';
+            }
+        }
+
+        function retryConnection() {
+            hideConnectionOverlay();
+            if (!retryServerId || !retryServerType || !retryPassword) {
+                disconnectAndBack();
+                return;
+            }
+
+            selectedServer = retryServerId;
+            currentDeviceType = retryServerType;
+            closeWebRTCConnection();
+            const statusDiv = document.getElementById('status');
+            if (statusDiv) {
+                statusDiv.className = 'status loading';
+                statusDiv.textContent = 'Reconnecting...';
+            }
+            fetch('/api/connect', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    server_id: retryServerId,
+                    socket_id: socket.id,
+                    type: retryServerType,
+                    password: retryPassword
+                })
+            })
+                .then(res => res.json())
+                .then(data => {
+                    if (window.RC_VERBOSE) console.log('[browser] retry response', data);
+                    if (data.status === 'connected') {
+                        if (statusDiv) {
+                            statusDiv.className = 'status';
+                            statusDiv.textContent = 'Waiting for server authorization...';
+                        }
+                    } else {
+                        if (statusDiv) {
+                            statusDiv.className = 'status';
+                            statusDiv.textContent = data.error || 'Retry failed';
+                        }
+                        showConnectionOverlay('Retry failed', data.error || 'Connection could not be restored.');
+                    }
+                })
+                .catch((err) => {
+                    console.error('[browser] retry request failed', err);
+                    if (statusDiv) {
+                        statusDiv.className = 'status';
+                        statusDiv.textContent = 'Retry failed';
+                    }
+                    showConnectionOverlay('Retry failed', 'The relay could not be reached. Please try again.');
                 });
         }
 
@@ -684,6 +773,9 @@
             };
 
             channel.onclose = () => {
+                if (isConnected) {
+                    showConnectionOverlay('Connection lost', 'The remote session was interrupted. Retry to reconnect.');
+                }
             };
 
             channel.onerror = (err) => {
@@ -747,6 +839,7 @@
                         statusDiv.className = 'status';
                         statusDiv.textContent = 'Connection lost';
                     }
+                    showConnectionOverlay('Connection lost', 'The remote session was interrupted. Retry to reconnect.');
                 }
             };
 
@@ -1112,6 +1205,10 @@
             } catch (e) { }
             isConnected = false;
             currentDeviceType = null;
+            retryPassword = '';
+            retryServerId = null;
+            retryServerType = null;
+            hideConnectionOverlay();
             document.getElementById('view-screen').style.display = 'none';
             document.getElementById('view-connect').style.display = 'block';
             const statusDiv = document.getElementById('status');

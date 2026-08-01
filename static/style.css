@@ -524,7 +524,7 @@ h2 {
 }
 
 .view-screen {
-    display: block;
+    display: none;
     height: 100vh;
     position: relative;
 }
@@ -622,6 +622,46 @@ h2 {
 
 .right-panel.collapsed {
     transform: translateX(110%);
+}
+
+.connection-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(4, 10, 20, 0.78);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1200;
+}
+
+.connection-overlay-card {
+    width: min(420px, calc(100vw - 32px));
+    background: rgba(19, 28, 45, 0.96);
+    border-radius: 18px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 20px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+}
+
+.connection-overlay-title {
+    font-size: 20px;
+    font-weight: 800;
+    margin-bottom: 8px;
+}
+
+.connection-overlay-text {
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1.6;
+    margin-bottom: 18px;
+}
+
+.connection-overlay-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+    flex-wrap: wrap;
 }
 
 .screen-area {

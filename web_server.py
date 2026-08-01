@@ -5,12 +5,20 @@ import time
 import subprocess
 import shutil
 import json
+ASYNC_MODE = 'threading'
+try:
+    from gevent import monkey
+    monkey.patch_all()
+    ASYNC_MODE = 'gevent'
+except Exception:
+    pass
+
 from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'your-secret-key'
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode=ASYNC_MODE, logger=False, engineio_logger=False)
 
 registered_servers = {}
 browser_sessions = {}
@@ -80,9 +88,6 @@ def connect():
     server = registered_servers.get(server_id)
     if not server or not server.get('sid'):
         return jsonify({'error': 'Selected server is not available'}), 404
-
-    if not server.get('password_protected'):
-        return jsonify({'error': 'Server must be password protected'}), 403
 
     browser_sessions[socket_id] = {
         'server_id': server_id,
@@ -161,8 +166,6 @@ def handle_socket_connect():
 @socketio.on('register_server')
 def handle_register_server(data):
     data = data or {}
-    if not bool(data.get('password_protected')):
-        return
 
     server_id = data.get('server_id') or f"server-{request.sid[:8]}"
     print(f'[web_server] register_server {server_id} sid={request.sid}')
@@ -179,7 +182,6 @@ def handle_register_server(data):
         'direct_port': data.get('direct_port'),
         'status': 'online',
         'last_seen': time.time(),
-        'password_protected': True,
     }
 
 
@@ -287,4 +289,11 @@ def handle_socket_disconnect():
 if __name__ == '__main__':
     threading.Thread(target=_cleanup_sessions, daemon=True).start()
     port = int(os.environ.get('PORT', 5000))
-    socketio.run(app, host='0.0.0.0', port=port, debug=False, allow_unsafe_werkzeug=True)
+    socketio.run(
+        app,
+        host='0.0.0.0',
+        port=port,
+        debug=False,
+        use_reloader=False,
+        allow_unsafe_werkzeug=False,
+    )
