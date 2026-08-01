@@ -5,13 +5,20 @@ import time
 import subprocess
 import shutil
 import json
+import sys
+
 ASYNC_MODE = 'threading'
+GEVENT_WEBSOCKET_AVAILABLE = False
 try:
     from gevent import monkey
     monkey.patch_all()
     ASYNC_MODE = 'gevent'
+    from geventwebsocket.handler import WebSocketHandler
+    from gevent.pywsgi import WSGIServer
+    GEVENT_WEBSOCKET_AVAILABLE = True
 except Exception:
-    pass
+    WebSocketHandler = None
+    WSGIServer = None
 
 from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO
@@ -22,8 +29,8 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode=ASYNC_MODE, logger
 
 registered_servers = {}
 browser_sessions = {}
-SESSION_TIMEOUT = 300
-SERVER_TIMEOUT = 30
+SESSION_TIMEOUT = 3600
+SERVER_TIMEOUT = 60
 
 
 def _cleanup_sessions():
@@ -65,7 +72,7 @@ def discover_servers():
         now = time.time()
         servers = []
         for server_id, server_info in registered_servers.items():
-            if now - server_info.get('last_seen', now) > 20:
+            if now - server_info.get('last_seen', now) > SERVER_TIMEOUT:
                 continue
             servers.append(_server_snapshot(server_id, server_info))
         return jsonify({'servers': servers})
@@ -289,11 +296,15 @@ def handle_socket_disconnect():
 if __name__ == '__main__':
     threading.Thread(target=_cleanup_sessions, daemon=True).start()
     port = int(os.environ.get('PORT', 5000))
-    socketio.run(
-        app,
-        host='0.0.0.0',
-        port=port,
-        debug=False,
-        use_reloader=False,
-        allow_unsafe_werkzeug=False,
-    )
+    if ASYNC_MODE == 'gevent' and GEVENT_WEBSOCKET_AVAILABLE and WSGIServer is not None and WebSocketHandler is not None:
+        print('[web_server] starting gevent websocket server on 0.0.0.0:%s' % port)
+        WSGIServer(('0.0.0.0', port), app, handler_class=WebSocketHandler).serve_forever()
+    else:
+        socketio.run(
+            app,
+            host='0.0.0.0',
+            port=port,
+            debug=False,
+            use_reloader=False,
+            allow_unsafe_werkzeug=False,
+        )

@@ -266,6 +266,8 @@
         let retryPassword = '';
         let retryServerId = null;
         let retryServerType = null;
+        let suppressConnectionOverlay = false;
+        let retryInProgress = false;
 
         const headerDragState = {
             active: false,
@@ -603,55 +605,70 @@
             }
         }
 
-        function retryConnection() {
+        async function retryConnection() {
+            if (retryInProgress) {
+                return;
+            }
+
+            retryInProgress = true;
             hideConnectionOverlay();
             if (!retryServerId || !retryServerType || !retryPassword) {
+                retryInProgress = false;
                 disconnectAndBack();
                 return;
             }
 
+            suppressConnectionOverlay = true;
             selectedServer = retryServerId;
             currentDeviceType = retryServerType;
-            closeWebRTCConnection();
+            await closeWebRTCConnection();
+            hideConnectionOverlay();
+
             const statusDiv = document.getElementById('status');
             if (statusDiv) {
                 statusDiv.className = 'status loading';
                 statusDiv.textContent = 'Reconnecting...';
             }
-            fetch('/api/connect', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    server_id: retryServerId,
-                    socket_id: socket.id,
-                    type: retryServerType,
-                    password: retryPassword
-                })
-            })
-                .then(res => res.json())
-                .then(data => {
-                    if (window.RC_VERBOSE) console.log('[browser] retry response', data);
-                    if (data.status === 'connected') {
-                        if (statusDiv) {
-                            statusDiv.className = 'status';
-                            statusDiv.textContent = 'Waiting for server authorization...';
-                        }
-                    } else {
-                        if (statusDiv) {
-                            statusDiv.className = 'status';
-                            statusDiv.textContent = data.error || 'Retry failed';
-                        }
-                        showConnectionOverlay('Retry failed', data.error || 'Connection could not be restored.');
-                    }
-                })
-                .catch((err) => {
-                    console.error('[browser] retry request failed', err);
+
+            try {
+                await new Promise(resolve => setTimeout(resolve, 120));
+                const res = await fetch('/api/connect', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        server_id: retryServerId,
+                        socket_id: socket.id,
+                        type: retryServerType,
+                        password: retryPassword
+                    })
+                });
+                const data = await res.json();
+                if (window.RC_VERBOSE) console.log('[browser] retry response', data);
+                if (data.status === 'connected') {
+                    suppressConnectionOverlay = false;
                     if (statusDiv) {
                         statusDiv.className = 'status';
-                        statusDiv.textContent = 'Retry failed';
+                        statusDiv.textContent = 'Waiting for server authorization...';
                     }
-                    showConnectionOverlay('Retry failed', 'The relay could not be reached. Please try again.');
-                });
+                } else {
+                    suppressConnectionOverlay = false;
+                    if (statusDiv) {
+                        statusDiv.className = 'status';
+                        statusDiv.textContent = data.error || 'Retry failed';
+                    }
+                    showConnectionOverlay('Retry failed', data.error || 'Connection could not be restored.');
+                }
+            } catch (err) {
+                console.error('[browser] retry request failed', err);
+                suppressConnectionOverlay = false;
+                if (statusDiv) {
+                    statusDiv.className = 'status';
+                    statusDiv.textContent = 'Retry failed';
+                }
+                showConnectionOverlay('Retry failed', 'The relay could not be reached. Please try again.');
+            } finally {
+                retryInProgress = false;
+            }
         }
 
         function connectToServer(address, element, type) {
@@ -667,13 +684,19 @@
         }
 
 
-        function closeWebRTCConnection() {
-            if (webrtcChannel) {
-                try { webrtcChannel.close(); } catch (e) { }
+        async function closeWebRTCConnection() {
+            isConnected = false;
+            const channel = webrtcChannel;
+            const peer = webrtcPeer;
+            if (channel) {
+                try { channel.close(); } catch (e) { }
             }
-            if (webrtcPeer) {
-                try { webrtcPeer.close(); } catch (e) { }
+            if (peer) {
+                try { peer.close(); } catch (e) { }
             }
+
+            await new Promise(resolve => setTimeout(resolve, 120));
+
             webrtcChannel = null;
             webrtcPeer = null;
             webrtcReady = false;
@@ -773,6 +796,9 @@
             };
 
             channel.onclose = () => {
+                if (retryInProgress || suppressConnectionOverlay) {
+                    return;
+                }
                 if (isConnected) {
                     showConnectionOverlay('Connection lost', 'The remote session was interrupted. Retry to reconnect.');
                 }
@@ -826,6 +852,8 @@
 
             pc.onconnectionstatechange = () => {
                 if (pc.connectionState === 'connected') {
+                    suppressConnectionOverlay = false;
+                    retryInProgress = false;
                     webrtcReady = true;
                     const statusDiv = document.getElementById('status');
                     if (statusDiv) {
@@ -834,6 +862,9 @@
                     }
                     showScreenView();
                 } else if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+                    if (retryInProgress || suppressConnectionOverlay) {
+                        return;
+                    }
                     const statusDiv = document.getElementById('status');
                     if (statusDiv) {
                         statusDiv.className = 'status';

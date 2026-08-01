@@ -104,12 +104,6 @@ body {
     gap: 8px;
 }
 
-.btn-group {
-    display: flex;
-    gap: 6px;
-    flex-wrap: wrap;
-}
-
 .btn-small {
     padding: 8px 12px;
     font-size: 12px;
@@ -428,16 +422,10 @@ h2 {
     white-space: nowrap;
 }
 
-.server-actions {
-    display: flex;
-    gap: 8px
-}
-
 .header-el {
     display: flex;
     align-items: center;
     width: 100%;
-    padding-bottom: 6px;
     transition: width 0.24s ease;
     overflow-x: auto;
     overflow-y: hidden;
@@ -460,6 +448,7 @@ h2 {
     background: rgba(255, 255, 255, 0.08);
     opacity: 0;
     transition: opacity 0.16s ease;
+    z-index: 10;
 }
 
 #screenHeader:hover .header-scrollbar,
@@ -493,6 +482,7 @@ h2 {
     justify-content: center;
     justify-content: space-around;
     height: 100%;
+    gap: 8px;
 }
 
 .btn-wit i {
@@ -721,22 +711,6 @@ h2 {
 
 .panel-tab.active {
     display: block;
-}
-
-.toolbar {
-    display: flex;
-    gap: 8px;
-    margin-bottom: 10px;
-    flex-wrap: wrap;
-}
-
-.pill {
-    padding: 8px 10px;
-    border-radius: 8px;
-    background: rgba(255, 255, 255, 0.02);
-    color: var(--muted);
-    border: 1px solid rgba(255, 255, 255, 0.02);
-    cursor: pointer;
 }
 
 .control-section {

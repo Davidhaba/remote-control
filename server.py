@@ -351,13 +351,89 @@ def on_request_session(data):
         relay_socket.emit('session_ready', {'browser_sid': browser_sid, 'server_id': args.server_id})
 
 
+def _shutdown_webrtc_resources():
+    global webrtc_loop, webrtc_loop_thread
+    with webrtc_sessions_lock:
+        session_ids = list(webrtc_sessions.keys())
+
+    for sid in session_ids:
+        try:
+            _cleanup_webrtc_session(sid)
+        except Exception:
+            pass
+
+    if webrtc_loop is not None:
+        try:
+            if loop_running(webrtc_loop):
+                webrtc_loop.call_soon_threadsafe(webrtc_loop.stop)
+        except Exception:
+            pass
+
+        try:
+            if webrtc_loop_thread is not None and webrtc_loop_thread.is_alive():
+                webrtc_loop_thread.join(timeout=3)
+        except Exception:
+            pass
+
+        try:
+            if not webrtc_loop.is_closed():
+                webrtc_loop.close()
+        except Exception:
+            pass
+
+        webrtc_loop = None
+        webrtc_loop_thread = None
+
+
+def _cleanup_webrtc_session(browser_sid, remove_session=True):
+    with webrtc_sessions_lock:
+        session = webrtc_sessions.get(browser_sid)
+        if not session:
+            return
+
+        session['open'] = False
+        task = session.get('frame_task')
+        if task is not None:
+            try:
+                if hasattr(task, 'cancel'):
+                    task.cancel()
+            except Exception:
+                pass
+
+        channel = session.get('channel')
+        if channel is not None:
+            try:
+                if getattr(channel, 'readyState', None) != 'closed':
+                    channel.close()
+            except Exception:
+                pass
+
+        pc = session.get('pc')
+        loop = session.get('loop')
+        if pc is not None and loop_running(loop):
+            try:
+                future = asyncio.run_coroutine_threadsafe(pc.close(), loop)
+                try:
+                    future.result(timeout=2)
+                except Exception:
+                    pass
+            except Exception as exc:
+                error(f'error closing pc for browser_sid={browser_sid}: {exc}')
+
+        session['frame_task'] = None
+        session['channel'] = None
+        session['pc'] = None
+
+        if remove_session:
+            webrtc_sessions.pop(browser_sid, None)
+
+
 @relay_socket.on('end_session')
 def on_end_session(data):
     data = data or {}
     browser_sid = data.get('browser_sid')
     if browser_sid:
-        with webrtc_sessions_lock:
-            webrtc_sessions.pop(browser_sid, None)
+        _cleanup_webrtc_session(browser_sid)
 
 
 @relay_socket.on('session_denied')
@@ -366,8 +442,7 @@ def on_session_denied(data):
     browser_sid = data.get('browser_sid')
     info(f'session_denied browser_sid={browser_sid} data={data}')
     if browser_sid:
-        with webrtc_sessions_lock:
-            webrtc_sessions.pop(browser_sid, None)
+        _cleanup_webrtc_session(browser_sid)
 
 
 @relay_socket.on('connect')
@@ -402,28 +477,9 @@ def on_relay_disconnect():
         session_ids = list(webrtc_sessions.keys())
     for sid in session_ids:
         try:
-            with webrtc_sessions_lock:
-                session = webrtc_sessions.get(sid)
-            if not session:
-                continue
-            session['open'] = False
-            task = session.get('frame_task')
-            if task is not None:
-                try:
-                    task.cancel()
-                except Exception:
-                    pass
-            pc = session.get('pc')
-            loop = session.get('loop')
-            if pc is not None and loop_running(loop):
-                try:
-                    asyncio.run_coroutine_threadsafe(pc.close(), loop)
-                except Exception as exc:
-                    error(f'error closing pc for browser_sid={sid}: {exc}')
+            _cleanup_webrtc_session(sid)
         except Exception:
             pass
-        with webrtc_sessions_lock:
-            webrtc_sessions.pop(sid, None)
 
 
 def _build_candidate(candidate_data):
@@ -619,15 +675,7 @@ def _run_webrtc_offer(browser_sid, offer):
             @channel.on("close")
             def on_close():
                 info(f'datachannel closed for browser_sid={browser_sid}')
-                session['open'] = False
-                task = session.get('frame_task')
-                if task is not None:
-                    try:
-                        task.cancel()
-                    except Exception:
-                        pass
-                with webrtc_sessions_lock:
-                    webrtc_sessions.pop(browser_sid, None)
+                _cleanup_webrtc_session(browser_sid)
 
             if channel.readyState == 'open':
                 start_frame_sender()
@@ -767,7 +815,7 @@ async def _send_webrtc_frames(browser_sid):
 
                 channel.send(message)
                 if frame_seq % 50 == 0:
-                    info(f'sent frame {frame_seq} browser_sid={browser_sid} size={len(message)} buffered={getattr(channel, "bufferedAmount", "n/a")}')
+                    dbg(f'sent frame {frame_seq} browser_sid={browser_sid} size={len(message)} buffered={getattr(channel, "bufferedAmount", "n/a")}')
                     dbg(f'cursor present={bool(cursor_b64)} hotspot=({hotspot_x},{hotspot_y}) format={cursor_fmt}')
                     dbg(f'cursor present={bool(cursor_b64)} hotspot=({hotspot_x},{hotspot_y}) format={cursor_fmt}')
             except Exception as exc:
@@ -1348,8 +1396,7 @@ if os.name == 'nt':
                     except Exception:
                         pass
                     try:
-                        if webrtc_loop and loop_running(webrtc_loop):
-                            webrtc_loop.call_soon_threadsafe(webrtc_loop.stop)
+                        _shutdown_webrtc_resources()
                     except Exception:
                         pass
                     try:
@@ -1388,8 +1435,7 @@ try:
                 except Exception:
                     pass
                 try:
-                    if webrtc_loop and loop_running(webrtc_loop):
-                        webrtc_loop.call_soon_threadsafe(webrtc_loop.stop)
+                    _shutdown_webrtc_resources()
                 except Exception:
                     pass
                 try:
@@ -1430,7 +1476,6 @@ finally:
     except Exception:
         pass
     try:
-        if webrtc_loop and loop_running(webrtc_loop):
-            webrtc_loop.call_soon_threadsafe(webrtc_loop.stop)
+        _shutdown_webrtc_resources()
     except Exception:
         pass
