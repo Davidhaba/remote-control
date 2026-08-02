@@ -828,7 +828,7 @@
             };
 
             channel.onerror = (err) => {
-                console.error('Datachannel error', err);
+                console.error('Datachannel error', err?.message || err);
             };
 
             function handleFramePayload(payload) {
@@ -1192,8 +1192,6 @@
                 } catch (e) {
                     console.warn('WebRTC send failed', e);
                 }
-            } else {
-                console.warn('WebRTC channel not ready');
             }
         }
 

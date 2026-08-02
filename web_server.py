@@ -1,4 +1,5 @@
 import os
+import signal
 import socket
 import threading
 import time
@@ -298,8 +299,52 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     if ASYNC_MODE == 'gevent' and GEVENT_WEBSOCKET_AVAILABLE and WSGIServer is not None and WebSocketHandler is not None:
         print('[web_server] starting gevent websocket server on 0.0.0.0:%s' % port)
-        print('[web_server] you can access the web interface at http://localhost:%s' % port)
-        WSGIServer(('0.0.0.0', port), app, handler_class=WebSocketHandler).serve_forever()
+        server = WSGIServer(('0.0.0.0', port), app, handler_class=WebSocketHandler)
+        shutdown_requested = threading.Event()
+
+        def _handle_gevent_signal(signum, frame=None):
+            print(f'[web_server] received signal {signum}; shutting down')
+            shutdown_requested.set()
+            try:
+                server.stop()
+            except Exception:
+                pass
+            try:
+                server.close()
+            except Exception:
+                pass
+
+        try:
+            import gevent.signal as gevent_signal
+            gevent_signal.signal(signal.SIGINT, _handle_gevent_signal)
+            gevent_signal.signal(signal.SIGTERM, _handle_gevent_signal)
+        except Exception:
+            try:
+                signal.signal(signal.SIGINT, _handle_gevent_signal)
+                signal.signal(signal.SIGTERM, _handle_gevent_signal)
+            except Exception:
+                pass
+
+        try:
+            server.start()
+            print('[web_server] you can access the web interface at http://localhost:%s' % port)
+            while not shutdown_requested.is_set():
+                time.sleep(0.5)
+        except KeyboardInterrupt:
+            print('[web_server] KeyboardInterrupt received; shutting down')
+            _handle_gevent_signal(signal.SIGINT)
+        except Exception as e:
+            if not shutdown_requested.is_set():
+                print('[web_server] gevent server error:', str(e))
+        finally:
+            try:
+                server.stop()
+            except Exception:
+                pass
+            try:
+                server.close()
+            except Exception:
+                pass
     else:
         socketio.run(
             app,

@@ -351,16 +351,73 @@ def on_request_session(data):
         relay_socket.emit('session_ready', {'browser_sid': browser_sid, 'server_id': args.server_id})
 
 
+async def _async_cleanup_webrtc_session(browser_sid, remove_session=True):
+    with webrtc_sessions_lock:
+        session = webrtc_sessions.get(browser_sid)
+        if not session:
+            return
+
+    session['open'] = False
+    pc = session.get('pc')
+    if pc is not None:
+        try:
+            await asyncio.wait_for(pc.close(), timeout=2)
+        except Exception:
+            pass
+
+    channel = session.get('channel')
+    if channel is not None:
+        try:
+            if getattr(channel, 'readyState', None) != 'closed':
+                channel.close()
+        except Exception:
+            pass
+
+    with webrtc_sessions_lock:
+        session = webrtc_sessions.get(browser_sid)
+        if session:
+            session['frame_task'] = None
+            session['channel'] = None
+            session['pc'] = None
+            if remove_session:
+                webrtc_sessions.pop(browser_sid, None)
+
+
+async def _async_shutdown_webrtc_resources(session_ids):
+    for sid in session_ids:
+        try:
+            await _async_cleanup_webrtc_session(sid)
+        except Exception:
+            pass
+    try:
+        asyncio.get_running_loop().stop()
+    except Exception:
+        pass
+
+
 def _shutdown_webrtc_resources():
     global webrtc_loop, webrtc_loop_thread
     with webrtc_sessions_lock:
         session_ids = list(webrtc_sessions.keys())
 
-    for sid in session_ids:
+    if webrtc_loop is not None and loop_running(webrtc_loop):
         try:
-            _cleanup_webrtc_session(sid)
+            future = asyncio.run_coroutine_threadsafe(
+                _async_shutdown_webrtc_resources(session_ids),
+                webrtc_loop,
+            )
+            try:
+                future.result(timeout=5)
+            except Exception:
+                pass
         except Exception:
             pass
+    else:
+        for sid in session_ids:
+            try:
+                _cleanup_webrtc_session(sid)
+            except Exception:
+                pass
 
     if webrtc_loop is not None:
         try:
@@ -371,7 +428,7 @@ def _shutdown_webrtc_resources():
 
         try:
             if webrtc_loop_thread is not None and webrtc_loop_thread.is_alive():
-                webrtc_loop_thread.join(timeout=3)
+                webrtc_loop_thread.join(timeout=2)
         except Exception:
             pass
 
@@ -393,32 +450,30 @@ def _cleanup_webrtc_session(browser_sid, remove_session=True):
 
         session['open'] = False
         task = session.get('frame_task')
+        loop = session.get('loop')
         if task is not None:
             try:
-                if hasattr(task, 'cancel'):
+                if loop is not None and loop_running(loop) and hasattr(loop, 'call_soon_threadsafe'):
+                    loop.call_soon_threadsafe(task.cancel)
+                elif hasattr(task, 'cancel'):
                     task.cancel()
             except Exception:
                 pass
 
-        channel = session.get('channel')
-        if channel is not None:
-            try:
-                if getattr(channel, 'readyState', None) != 'closed':
-                    channel.close()
-            except Exception:
-                pass
-
         pc = session.get('pc')
-        loop = session.get('loop')
         if pc is not None and loop_running(loop):
             try:
-                future = asyncio.run_coroutine_threadsafe(pc.close(), loop)
+                asyncio.run_coroutine_threadsafe(pc.close(), loop)
+            except Exception as exc:
+                error(f'error scheduling pc.close() for browser_sid={browser_sid}: {exc}')
+        else:
+            channel = session.get('channel')
+            if channel is not None:
                 try:
-                    future.result(timeout=2)
+                    if getattr(channel, 'readyState', None) != 'closed':
+                        channel.close()
                 except Exception:
                     pass
-            except Exception as exc:
-                error(f'error closing pc for browser_sid={browser_sid}: {exc}')
 
         session['frame_task'] = None
         session['channel'] = None
@@ -569,6 +624,12 @@ def on_webrtc_candidate(data):
             }
             return
 
+        if session.get('pc') is None or session.get('loop') is None or not session.get('remote_description_set', False):
+            session.setdefault('candidate_queue', []).append(candidate)
+            dbg(f'queued candidate until PC exists or remote description set ' + str(browser_sid))
+            dbg(f'queue_length={len(session["candidate_queue"])} browser_sid={browser_sid}')
+            return
+
         ice_candidate = _build_candidate(candidate)
         if ice_candidate is None:
             error('candidate parse failed ' + str(browser_sid))
@@ -607,10 +668,10 @@ def _run_webrtc_offer(browser_sid, offer):
                 }
                 webrtc_sessions[browser_sid] = session
             session['pc'] = pc
+            session['loop'] = asyncio.get_running_loop()
             session['channel'] = None
             session['open'] = False
             session.setdefault('candidate_queue', [])
-            session['loop'] = asyncio.get_running_loop()
             session['remote_description_set'] = False
 
         @pc.on("datachannel")
