@@ -564,13 +564,9 @@ def on_webrtc_candidate(data):
                 'candidate_queue': [candidate],
                 'loop': None,
                 'remote_description_set': False,
+                'quality': 0,
+                'throttle_ms': 0,
             }
-            return
-
-        if session.get('pc') is None or session.get('loop') is None or not session.get('remote_description_set', False):
-            session.setdefault('candidate_queue', []).append(candidate)
-            dbg('queued candidate until PC exists or remote description set ' + str(browser_sid))
-            dbg(f'queue_length={len(session["candidate_queue"])} browser_sid={browser_sid}')
             return
 
         ice_candidate = _build_candidate(candidate)
@@ -666,7 +662,7 @@ def _run_webrtc_offer(browser_sid, offer):
                         payload = message
                     data = json.loads(payload)
                     if isinstance(data, dict):
-                        execute_command(data)
+                        execute_command(data, browser_sid=browser_sid)
                     else:
                         info(f'datachannel received non-object payload for browser_sid={browser_sid}: {payload}')
                 except Exception as exc:
@@ -741,6 +737,9 @@ def _run_webrtc_offer(browser_sid, offer):
                 'open': False,
                 'candidate_queue': [],
                 'loop': webrtc_loop,
+                'remote_description_set': False,
+                'quality': 0,
+                'throttle_ms': 0,
             }
             webrtc_sessions[browser_sid] = session
         else:
@@ -774,13 +773,26 @@ async def _send_webrtc_frames(browser_sid):
                 await asyncio.sleep(0.05)
                 continue
 
-            if use_manual_quality and manual_quality is not None:
+            qv = int(session.get('quality') or 0) if session else 0
+            if qv > 0:
                 try:
-                    quality = int(manual_quality)
+                    quality = int(qv)
                 except Exception:
                     quality = 70
             else:
-                quality = 70
+                try:
+                    buffered = getattr(channel, 'bufferedAmount', 0) or 0
+                    orig_h, orig_w = frame.shape[:2]
+                    area = orig_h * orig_w
+                    default_area = FIXED_FRAME_WIDTH * FIXED_FRAME_HEIGHT
+                    if buffered > 65536:
+                        quality = 40
+                    elif buffered > 32768:
+                        quality = 55
+                    else:
+                        quality = 70 if area > default_area else 85
+                except Exception:
+                    quality = 70
 
             def encode_frame():
                 _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
@@ -822,9 +834,24 @@ async def _send_webrtc_frames(browser_sid):
                 error(f'frame send failed browser_sid={browser_sid} exc={repr(exc)}')
                 break
             delay = 0.12
-            if use_manual_throttle and manual_throttle_interval_ms is not None:
+            try:
+                th = int(session.get('throttle_ms') or 0) if session else 0
+            except Exception:
+                th = 0
+            if th > 0:
                 try:
-                    delay = max(0.01, float(manual_throttle_interval_ms) / 1000.0)
+                    delay = max(0.01, float(th) / 1000.0)
+                except Exception:
+                    delay = 0.12
+            else:
+                try:
+                    buffered = getattr(channel, 'bufferedAmount', 0) or 0
+                    if buffered > 65536:
+                        delay = 0.2
+                    elif buffered > 32768:
+                        delay = 0.15
+                    else:
+                        delay = 0.12
                 except Exception:
                     delay = 0.12
             await asyncio.sleep(delay)
@@ -850,10 +877,6 @@ else:
         sys.exit(1)
     server_password = args.password.strip()
 
-manual_quality = None
-use_manual_quality = False
-manual_throttle_interval_ms = None
-use_manual_throttle = False
 
 def capture_screen_dxgi():
     try:
@@ -1026,6 +1049,11 @@ def handle_client_connection(frame_con, client_address):
     last_hotspot_y = None
     missing_count = 0
 
+    ws_settings = {
+        'quality': 0,
+        'throttle_ms': 0,
+    }
+
     def command_reader():
         while active['running']:
             opcode, payload = _recv_ws_frame(frame_con)
@@ -1044,7 +1072,7 @@ def handle_client_connection(frame_con, client_address):
                     message = payload.decode('utf-8', errors='ignore')
                     data = json.loads(message)
                     if isinstance(data, dict):
-                        execute_command(data)
+                        execute_command(data, ws_settings=ws_settings)
                 except Exception:
                     pass
                 continue
@@ -1063,13 +1091,20 @@ def handle_client_connection(frame_con, client_address):
                 time.sleep(0.025)
                 continue
 
-            if use_manual_quality and manual_quality is not None:
+            qv = int(ws_settings.get('quality') or 0)
+            if qv > 0:
                 try:
-                    quality = int(manual_quality)
+                    quality = int(qv)
                 except Exception:
                     quality = 85
             else:
-                quality = 85
+                try:
+                    orig_h, orig_w = frame.shape[:2]
+                    area = orig_h * orig_w
+                    default_area = FIXED_FRAME_WIDTH * FIXED_FRAME_HEIGHT
+                    quality = 70 if area > default_area else 85
+                except Exception:
+                    quality = 85
 
             target_w, target_h = FIXED_FRAME_WIDTH, FIXED_FRAME_HEIGHT
             orig_h, orig_w = frame.shape[:2]
@@ -1152,7 +1187,7 @@ def capture_cursor_worker():
         except Exception:
             pass
 
-def execute_command(cmd_data):
+def execute_command(cmd_data, browser_sid=None, ws_settings=None):
     cmd_type = cmd_data.get("type")
     if cmd_type == "mouse_move":
         x, y = cmd_data.get("x"), cmd_data.get("y")
@@ -1264,31 +1299,37 @@ def execute_command(cmd_data):
         except Exception:
             pass
     elif cmd_type == "set_quality":
-        global manual_quality, use_manual_quality
         try:
+            settings = None
+            if browser_sid:
+                with webrtc_sessions_lock:
+                    settings = webrtc_sessions.get(browser_sid)
+            if settings is None:
+                settings = ws_settings
             mode = cmd_data.get('mode')
-            if mode == 'manual':
-                q = cmd_data.get('quality')
-                if q is not None:
-                    manual_quality = int(q)
-                    use_manual_quality = True
-            else:
-                use_manual_quality = False
-                manual_quality = None
+            q = cmd_data.get('quality')
+            if settings is not None:
+                try:
+                    settings['quality'] = int(q or 0)
+                except Exception:
+                    settings['quality'] = 0
         except Exception:
             pass
     elif cmd_type == "set_throttle":
-        global manual_throttle_interval_ms, use_manual_throttle
         try:
+            settings = None
+            if browser_sid:
+                with webrtc_sessions_lock:
+                    settings = webrtc_sessions.get(browser_sid)
+            if settings is None:
+                settings = ws_settings
             mode = cmd_data.get('mode')
-            if mode == 'manual':
-                interval = cmd_data.get('interval_ms')
-                if interval is not None:
-                    manual_throttle_interval_ms = int(interval)
-                    use_manual_throttle = True
-            else:
-                use_manual_throttle = False
-                manual_throttle_interval_ms = None
+            interval = cmd_data.get('interval_ms')
+            if settings is not None:
+                try:
+                    settings['throttle_ms'] = int(interval or 0)
+                except Exception:
+                    settings['throttle_ms'] = 0
         except Exception:
             pass
 
