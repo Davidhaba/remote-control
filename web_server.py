@@ -21,7 +21,7 @@ except Exception:
     WebSocketHandler = None
     WSGIServer = None
 
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, redirect
 from flask_socketio import SocketIO
 
 app = Flask(__name__)
@@ -65,6 +65,14 @@ def _server_snapshot(server_id, server_info):
 @app.route('/')
 def index():
     return render_template('index.html')
+
+
+@app.route('/download/RemoteControlServer.exe', methods=['GET'])
+def download_server_file():
+    return redirect(
+        'https://github.com/Davidhaba/remote-control/releases/download/latest/RemoteControlServer.exe',
+        code=302,
+    )
 
 
 @app.route('/api/discover-servers', methods=['GET'])

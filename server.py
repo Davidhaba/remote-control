@@ -203,7 +203,7 @@ try:
 except ImportError:
     if Image is None:
         print("cv2 module not found. Please install opencv-python package.")
-        exit(1)
+        sys.exit(1)
 
     class _CV2Fallback:
         COLOR_RGB2BGR = 4

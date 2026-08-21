@@ -67,9 +67,23 @@ input:focus-visible {
 .connect-header {
     display: flex;
     align-items: center;
-    justify-content: flex-start;
+    justify-content: space-between;
     gap: 16px;
     padding: 8px 0 0;
+}
+
+.setup-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 38px;
+    padding: 8px 12px;
+    color: #cfe6e0;
+    font-size: 12px;
+}
+
+.setup-btn i {
+    color: var(--accent-strong);
 }
 
 .app-title {
@@ -614,6 +628,139 @@ input:focus-visible {
     transform: translateY(0) scale(1);
 }
 
+.setup-modal {
+    max-height: min(760px, calc(100vh - 32px));
+    overflow: auto;
+}
+
+.setup-modal-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 20px;
+}
+
+.setup-modal-header h2 {
+    margin-top: 6px;
+}
+
+.modal-close {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    min-height: 32px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--muted);
+    font-size: 20px;
+    line-height: 1;
+}
+
+.modal-close:hover {
+    color: var(--text);
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.setup-steps {
+    display: grid;
+    gap: 12px;
+}
+
+.setup-step {
+    display: grid;
+    grid-template-columns: 32px minmax(0, 1fr);
+    gap: 12px;
+    padding: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 11px;
+    background: rgba(255, 255, 255, 0.025);
+}
+
+.setup-step-number {
+    color: var(--accent-strong);
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+}
+
+.setup-step strong {
+    display: block;
+    margin-bottom: 4px;
+    color: #edf4f2;
+    font-size: 13px;
+}
+
+.setup-step p {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.setup-step code,
+.setup-command {
+    display: inline-block;
+    margin-top: 7px;
+    padding: 6px 8px;
+    border-radius: 7px;
+    background: rgba(0, 0, 0, 0.24);
+    color: #b9f3dd;
+    font-family: Consolas, 'Courier New', monospace;
+    font-size: 11px;
+}
+
+.setup-step-downloads {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+    flex-wrap: wrap;
+}
+
+.setup-step-downloads a {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-height: 36px;
+    padding: 8px 11px;
+    text-decoration: none;
+}
+
+.setup-command {
+    display: block;
+    width: fit-content;
+}
+
+.setup-note {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-top: 16px;
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.5;
+}
+
+.setup-note i {
+    margin-top: 2px;
+    color: var(--accent-strong);
+}
+
+.setup-actions {
+    margin-top: 20px;
+}
+
+.setup-actions a {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    text-decoration: none;
+}
+
 .modal-content h2,
 .connection-overlay-title {
     margin-bottom: 10px;
@@ -871,12 +1018,12 @@ input:focus-visible {
 .right-panel {
     position: fixed;
     top: 14px;
-    right: 14px;
+    right: 0px;
     width: 320px;
     height: calc(100vh - 28px);
     padding: 18px 16px 16px;
     border: 1px solid var(--border);
-    border-radius: 16px;
+    border-radius: 16px 0 0 16px;
     background: rgba(12, 17, 19, 0.94);
     backdrop-filter: blur(20px);
     box-shadow: var(--shadow);
@@ -955,7 +1102,7 @@ input:focus-visible {
     padding: 12px;
     padding-top: 16px;
     border: 1px solid var(--border);
-    border-radius: 16px;
+    border-radius: 16px 16px 0 0;
     background: rgba(12, 17, 19, 0.94);
     box-shadow: var(--shadow);
     backdrop-filter: blur(18px);
@@ -1287,6 +1434,42 @@ input:focus-visible {
         overflow: auto;
         padding: 14px 10px 10px;
         border-radius: 14px;
+    }
+
+    .connect-header {
+        align-items: flex-start;
+    }
+
+    .setup-btn {
+        min-height: 36px;
+        padding: 7px 9px;
+        font-size: 11px;
+    }
+
+    .setup-btn span {
+        display: none;
+    }
+
+    .setup-modal {
+        padding: 18px 14px;
+    }
+
+    .setup-actions {
+        justify-content: stretch;
+    }
+
+    .setup-actions .btn,
+    .setup-actions a {
+        flex: 1;
+    }
+
+    .setup-step-downloads {
+        display: grid;
+        grid-template-columns: 1fr;
+    }
+
+    .setup-step-downloads a {
+        width: 100%;
     }
 
     .btn {

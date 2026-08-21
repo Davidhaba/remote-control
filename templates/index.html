@@ -19,6 +19,9 @@
     <div id="view-connect">
         <header class="connect-header">
             <div class="app-title"><span class="brand-mark"><i class="fa fa-crosshairs"></i></span> Remote Control</div>
+            <button type="button" class="btn btn-ghost setup-btn" onclick="showSetupModal()">
+                <i class="fa fa-book"></i><span>How to start</span>
+            </button>
         </header>
 
         <main class="connect-workspace">
@@ -236,6 +239,49 @@
                 </div>
             </form>
         </div>
+    </div>
+
+    <div id="setupModal" class="modal-backdrop" onclick="hideSetupModal(event)">
+        <article class="modal-content setup-modal" role="dialog" aria-modal="true" aria-labelledby="setupModalTitle"
+            onclick="event.stopPropagation();">
+            <div class="setup-modal-header">
+                <div>
+                    <div class="section-kicker">QUICK START</div>
+                    <h2 id="setupModalTitle">Run the server</h2>
+                </div>
+                <button type="button" class="modal-close" aria-label="Close instructions" onclick="hideSetupModal()">&times;</button>
+            </div>
+
+            <div class="setup-steps">
+                <div class="setup-step">
+                    <span class="setup-step-number">01</span>
+                    <div>
+                        <strong>Download the server</strong>
+                        <p>Save the server application on the computer you want to control.</p>
+                        <div class="setup-step-downloads">
+                            <a class="btn btn-primary" href="/download/RemoteControlServer.exe"><i class="fa fa-download"></i> RemoteControlServer.exe</a>
+                        </div>
+                    </div>
+                </div>
+                <div class="setup-step">
+                    <span class="setup-step-number">02</span>
+                    <div><strong>Start the server</strong><p>Open the downloaded file. Windows may ask you to confirm that you want to run it.</p></div>
+                </div>
+                <div class="setup-step">
+                    <span class="setup-step-number">03</span>
+                    <div><strong>Allow access</strong><p>If Windows Firewall asks, allow network access so the server can connect to the relay.</p></div>
+                </div>
+                <div class="setup-step">
+                    <span class="setup-step-number">04</span>
+                    <div><strong>Connect here</strong><p>Return to this page, choose Desktop, scan for hosts, and select your computer.</p></div>
+                </div>
+            </div>
+
+            <div class="setup-note"><i class="fa fa-info-circle"></i> Keep this page and the server terminal running during the session.</div>
+            <div class="modal-actions setup-actions">
+                <button type="button" class="btn btn-ghost" onclick="hideSetupModal()">Close</button>
+            </div>
+        </article>
     </div>
 
     <script>
@@ -594,6 +640,15 @@
             document.getElementById('passwordInput').value = '';
             document.getElementById('passwordModal').classList.add('active');
             document.getElementById('passwordInput').focus();
+        }
+
+        function showSetupModal() {
+            document.getElementById('setupModal').classList.add('active');
+        }
+
+        function hideSetupModal(event) {
+            if (event && event.target !== event.currentTarget) return;
+            document.getElementById('setupModal').classList.remove('active');
         }
 
         function hidePasswordModal(event) {
