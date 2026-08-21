@@ -1,0 +1,17 @@
+# Web relay
+Flask
+Flask-SocketIO
+gunicorn
+gevent
+gevent-websocket
+websocket-client
+numpy
+python-socketio
+aiortc
+av
+pyautogui
+pywin32
+Pillow
+opencv-python
+mss
+pystray
