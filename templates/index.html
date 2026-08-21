@@ -29,7 +29,6 @@
                     <button class="tab-btn" onclick="switchTab('mobile')"><i class="fa fa-mobile"></i> Mobile</button>
                 </div>
 
-                <!-- Desktop Tab -->
                 <div id="tab-desktop" class="tab-content active">
                     <div class="card-header">
                         <div>
@@ -56,7 +55,6 @@
                         control it.</p>
                 </div>
 
-                <!-- Mobile Tab -->
                 <div id="tab-mobile" class="tab-content">
                     <div class="card-header">
                         <div>
@@ -215,7 +213,7 @@
         </div>
     </div>
 
-    <div id="passwordModal" class="modal-backdrop" onclick="hidePasswordModal(event)">
+    <div id="passwordModal" class="modal-backdrop" onclick="cancelPasswordModal(event)">
         <div class="modal-content" onclick="event.stopPropagation();">
             <h2>Enter server password</h2>
             <div id="modalServerInfo" class="server-info"></div>
@@ -232,7 +230,7 @@
     </div>
 
     <script>
-        const socket = io({ transports: ['polling'] });
+        const socket = io();
         socket.on('connect_error', (err) => {
             console.error('Socket connect error', err);
         });
@@ -769,13 +767,75 @@
         }
 
         function startWebRTCSession() {
-            if (webrtcPeer || !selectedServer) return;
+            if (webrtcPeer) throw new Error('WebRTC session already started');
+            if (!selectedServer) throw new Error('No server selected');
             const pc = new RTCPeerConnection({ iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }] });
             webrtcPeer = pc;
             webrtcReady = false;
 
             const channel = pc.createDataChannel('control');
             webrtcChannel = channel;
+            try {
+                pc.addTransceiver('video', { direction: 'recvonly' });
+            } catch (e) {
+                console.warn('addTransceiver(video) not supported:', e);
+            }
+            const remoteVideo = document.createElement('video');
+            remoteVideo.autoplay = true;
+            remoteVideo.playsInline = true;
+            remoteVideo.muted = true;
+            remoteVideo.style.display = 'none';
+            document.body.appendChild(remoteVideo);
+            pc.ontrack = (event) => {
+                try {
+                    if (event.streams && event.streams[0]) {
+                        remoteVideo.srcObject = event.streams[0];
+                    } else {
+                        const ms = new MediaStream();
+                        ms.addTrack(event.track);
+                        remoteVideo.srcObject = ms;
+                    }
+                    console.log('[browser] ontrack event, track kind=', event.track && event.track.kind);
+                    remoteVideo.onplaying = () => { console.log('[browser] remoteVideo playing'); };
+                    remoteVideo.onloadedmetadata = () => { console.log('[browser] remoteVideo loadedmetadata', remoteVideo.videoWidth, remoteVideo.videoHeight); };
+                    startVideoRenderLoop();
+                } catch (e) {
+                    console.error('ontrack error', e);
+                }
+            };
+            let _videoRenderRunning = false;
+            function startVideoRenderLoop() {
+                if (_videoRenderRunning) return;
+                _videoRenderRunning = true;
+                const render = () => {
+                    try {
+                        if (!remoteVideo || remoteVideo.readyState < 2) {
+                            requestAnimationFrame(render);
+                            return;
+                        }
+                        if (canvas && ctx) {
+                            if (canvas.width !== remoteVideo.videoWidth || canvas.height !== remoteVideo.videoHeight) {
+                                canvas.width = remoteVideo.videoWidth || canvas.width;
+                                canvas.height = remoteVideo.videoHeight || canvas.height;
+                                console.log('[browser] canvas resized to', canvas.width, canvas.height);
+                            }
+                            ctx.drawImage(remoteVideo, 0, 0);
+                            if (window.RC_VERBOSE) {
+                                if (!startVideoRenderLoop._count) startVideoRenderLoop._count = 0;
+                                if (startVideoRenderLoop._count < 5) {
+                                    console.log('[browser] rendered video frame', startVideoRenderLoop._count+1);
+                                    startVideoRenderLoop._count++;
+                                }
+                            }
+                            updateCursorDisplay();
+                        }
+                    } catch (err) {
+                        console.warn('video render error', err);
+                    }
+                    requestAnimationFrame(render);
+                };
+                requestAnimationFrame(render);
+            }
 
             channel.onopen = () => {
                 if (window.RC_VERBOSE) console.log('[browser] datachannel open');
@@ -792,27 +852,41 @@
                 if (window.RC_VERBOSE) console.log('[browser] datachannel message event', typeof event.data, event.data?.length || 0);
                 if (!event.data) return;
                 try {
-                    let text = null;
                     if (typeof event.data === 'string') {
-                        text = event.data;
-                    } else if (event.data instanceof ArrayBuffer) {
-                        text = new TextDecoder('utf-8').decode(event.data);
-                    } else if (event.data instanceof Blob) {
-                        const reader = new FileReader();
-                        reader.onload = () => {
-                            try {
-                                const payload2 = JSON.parse(reader.result);
-                                handleFramePayload(payload2);
-                            } catch (err) {
-                                console.error('Failed parse blob message', err);
-                            }
-                        };
-                        reader.readAsText(event.data);
+                        const payload = JSON.parse(event.data);
+                        if (!payload) return;
+                        if (payload.type === 'frame') {
+                            handleFramePayload(payload);
+                            return;
+                        }
+                        if (payload.type === 'cursor') {
+                            handleCursorPayload(payload);
+                            return;
+                        }
                         return;
                     }
-                    const payload = text ? JSON.parse(text) : null;
-                    if (!payload || payload.type !== 'frame') return;
-                    handleFramePayload(payload);
+
+                    const processArrayBuffer = (ab) => {
+                        const bytes = new Uint8Array(ab);
+                        let sep = -1;
+                        for (let i = 0; i < bytes.length; i++) { if (bytes[i] === 0x1E) { sep = i; break; } }
+                        if (sep <= 0) { console.warn('Malformed binary frame (no separator)'); return; }
+                        const metaBytes = bytes.subarray(0, sep);
+                        const jpegBytes = bytes.subarray(sep + 1);
+                        const metaText = new TextDecoder('utf-8').decode(metaBytes);
+                        const meta = JSON.parse(metaText);
+                        handleBinaryFrame(meta, jpegBytes);
+                    };
+
+                    if (event.data instanceof ArrayBuffer) {
+                        processArrayBuffer(event.data);
+                    } else if (event.data instanceof Blob) {
+                        const reader = new FileReader();
+                        reader.onload = () => { processArrayBuffer(reader.result); };
+                        reader.readAsArrayBuffer(event.data);
+                    } else {
+                        console.warn('Unknown datachannel message type', typeof event.data);
+                    }
                 } catch (err) {
                     console.warn('WebRTC frame parse failed', err);
                 }
@@ -860,6 +934,181 @@
                         console.error('[browser] image load failed', err, payload.frame?.length);
                     };
                     img.src = 'data:image/jpeg;base64,' + payload.frame;
+                }
+            }
+
+            function handleCursorPayload(payload) {
+                try {
+                    if (payload.cursorRemoved) {
+                        cursorImageAvailable = false;
+                        if (remoteCursorImg) {
+                            remoteCursorImg.style.display = 'none';
+                            remoteCursorImg.src = '';
+                        }
+                        updateCursorDisplay();
+                        return;
+                    }
+                    const imgB64 = payload.cursorImage;
+                    if (!imgB64) return;
+                    // set cursor image and hotspot
+                    cursorHotspotX = payload.cursorHotspotX || 0;
+                    cursorHotspotY = payload.cursorHotspotY || 0;
+                    cursorImageAvailable = true;
+                    if (!remoteCursorImg) remoteCursorImg = document.getElementById('remoteCursorImg');
+                    // use blob and createImageBitmap for faster rendering if possible
+                    try {
+                        const bin = atob(imgB64);
+                        const len = bin.length;
+                        const arr = new Uint8Array(len);
+                        for (let i = 0; i < len; i++) arr[i] = bin.charCodeAt(i);
+                        const blob = new Blob([arr], { type: 'image/png' });
+                        if (window.createImageBitmap) {
+                            createImageBitmap(blob).then(bm => {
+                                // draw into an offscreen canvas and use as data URL to set img.src
+                                try {
+                                    const off = document.createElement('canvas');
+                                    off.width = bm.width; off.height = bm.height;
+                                    const octx = off.getContext('2d');
+                                    octx.drawImage(bm, 0, 0);
+                                    try { bm.close(); } catch (e) {}
+                                    const url = off.toDataURL('image/png');
+                                    remoteCursorImg.src = url;
+                                    remoteCursorImg.style.display = 'block';
+                                    updateCursorDisplay();
+                                } catch (e) {
+                                    remoteCursorImg.src = 'data:image/png;base64,' + imgB64;
+                                    remoteCursorImg.style.display = 'block';
+                                    updateCursorDisplay();
+                                }
+                            }).catch(err => {
+                                remoteCursorImg.src = 'data:image/png;base64,' + imgB64;
+                                remoteCursorImg.style.display = 'block';
+                                updateCursorDisplay();
+                            });
+                        } else {
+                            remoteCursorImg.src = 'data:image/png;base64,' + imgB64;
+                            remoteCursorImg.style.display = 'block';
+                            updateCursorDisplay();
+                        }
+                    } catch (e) {
+                        try { remoteCursorImg.src = 'data:image/png;base64,' + imgB64; remoteCursorImg.style.display = 'block'; } catch (ex) {}
+                        updateCursorDisplay();
+                    }
+                } catch (e) {
+                    console.warn('handleCursorPayload failed', e);
+                }
+            }
+
+            async function handleBinaryFrame(meta, jpegBytes) {
+                try {
+                    if (window.RC_VERBOSE) console.log('[browser] recv binary frame meta=', meta, 'jpegBytes=', jpegBytes?.length || 0);
+                    let blob;
+                    if (meta && meta.compressed === 'gzip') {
+                        if (typeof DecompressionStream !== 'undefined') {
+                            try {
+                                const gzBlob = new Blob([jpegBytes], { type: 'application/gzip' });
+                                const ds = new DecompressionStream('gzip');
+                                const decompressedStream = gzBlob.stream().pipeThrough(ds);
+                                const ab = await new Response(decompressedStream).arrayBuffer();
+                                blob = new Blob([ab], { type: 'image/jpeg' });
+                            } catch (e) {
+                                console.warn('gzip decompression failed', e);
+                                blob = new Blob([jpegBytes], { type: 'image/jpeg' });
+                            }
+                        } else {
+                            console.warn('DecompressionStream not available in this browser; cannot decompress gzip frames');
+                            blob = new Blob([jpegBytes], { type: 'image/jpeg' });
+                        }
+                    } else {
+                        blob = new Blob([jpegBytes], { type: 'image/jpeg' });
+                    }
+                    const drawBitmap = (bitmap) => {
+                        try {
+                            if (window.RC_VERBOSE) console.log('[browser] bitmap received', bitmap.width, bitmap.height, 'meta.region=', meta?.region, 'meta.full=', meta?.full_w + 'x' + meta?.full_h);
+                            if (meta && meta.full_w && meta.full_h) {
+                                if (canvas.width !== meta.full_w || canvas.height !== meta.full_h) {
+                                    canvas.width = meta.full_w;
+                                    canvas.height = meta.full_h;
+                                }
+                            }
+                            if (meta && meta.region) {
+                                const r = meta.region;
+                                ctx.drawImage(bitmap, r.x, r.y);
+                            } else {
+                                screenWidth = bitmap.width;
+                                screenHeight = bitmap.height;
+                                ctx.drawImage(bitmap, 0, 0);
+                            }
+                        } finally {
+                            try { if (bitmap.close) bitmap.close(); } catch (e) {}
+                        }
+                        try {
+                            if (meta && typeof meta.cursorHotspotX !== 'undefined') {
+                                cursorHotspotX = meta.cursorHotspotX || 0;
+                                cursorHotspotY = meta.cursorHotspotY || 0;
+                            }
+                        } catch (e) {}
+                        updateCursorDisplay();
+                    };
+
+                    if (window.createImageBitmap) {
+                        createImageBitmap(blob).then(drawBitmap).catch(err => {
+                            console.warn('createImageBitmap failed, falling back', err);
+                            const url = URL.createObjectURL(blob);
+                            const img = new Image();
+                            img.onload = () => {
+                                try {
+                                    if (meta && meta.region) {
+                                        const r = meta.region;
+                                        ctx.drawImage(img, r.x, r.y);
+                                    } else {
+                                        screenWidth = img.width; screenHeight = img.height;
+                                        if (canvas.width !== img.width || canvas.height !== img.height) {
+                                            canvas.width = img.width; canvas.height = img.height;
+                                        }
+                                        ctx.drawImage(img, 0, 0);
+                                    }
+                                } finally { URL.revokeObjectURL(url); }
+                                try {
+                                    if (meta && typeof meta.cursorHotspotX !== 'undefined') {
+                                        cursorHotspotX = meta.cursorHotspotX || 0;
+                                        cursorHotspotY = meta.cursorHotspotY || 0;
+                                    }
+                                } catch (e) {}
+                                updateCursorDisplay();
+                            };
+                            img.onerror = (err) => { URL.revokeObjectURL(url); console.warn('Binary frame image load failed', err); };
+                            img.src = url;
+                        });
+                    } else {
+                        const url = URL.createObjectURL(blob);
+                        const img = new Image();
+                        img.onload = () => {
+                            try {
+                                if (meta && meta.region) {
+                                    const r = meta.region;
+                                    ctx.drawImage(img, r.x, r.y);
+                                } else {
+                                    screenWidth = img.width; screenHeight = img.height;
+                                    if (canvas.width !== img.width || canvas.height !== img.height) {
+                                        canvas.width = img.width; canvas.height = img.height;
+                                    }
+                                    ctx.drawImage(img, 0, 0);
+                                }
+                            } finally { URL.revokeObjectURL(url); }
+                            try {
+                                if (meta && typeof meta.cursorHotspotX !== 'undefined') {
+                                    cursorHotspotX = meta.cursorHotspotX || 0;
+                                    cursorHotspotY = meta.cursorHotspotY || 0;
+                                }
+                            } catch (e) {}
+                            updateCursorDisplay();
+                        };
+                        img.onerror = (err) => { URL.revokeObjectURL(url); console.warn('Binary frame image load failed', err); };
+                        img.src = url;
+                    }
+                } catch (e) {
+                    console.warn('handleBinaryFrame failed', e);
                 }
             }
 
@@ -995,14 +1244,22 @@
         });
 
         socket.on('session_ready', (data) => {
+            const statusDiv = document.getElementById('status');
             try {
-                const statusDiv = document.getElementById('status');
                 if (data && data.server_id && selectedServer && data.server_id === selectedServer) {
                     statusDiv.className = 'status';
                     statusDiv.textContent = 'Connecting via WebRTC...';
                     startWebRTCSession();
+                } else {
+                    throw new Error('Server ID mismatch');
                 }
-            } catch (e) { }
+            } catch (e) {
+                if (statusDiv) {
+                    statusDiv.className = 'status';
+                    statusDiv.textContent = e.message || 'Error starting WebRTC session';
+                }
+                console.error(e);
+            }
         });
 
         socket.on('session_denied', (data) => {
@@ -1013,7 +1270,9 @@
                     statusDiv.textContent = 'Authentication failed';
                     selectedServer = null;
                 }
-            } catch (e) { }
+            } catch (e) {
+                console.error(e);
+            }
         });
 
         function updateCursorDisplay() {

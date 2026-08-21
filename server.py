@@ -20,6 +20,12 @@ from ctypes import wintypes
 import socketio
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCIceCandidate, RTCConfiguration, RTCIceServer
 from aiortc.sdp import candidate_from_sdp
+import aiortc.sdp as sdp_module
+from aiortc import VideoStreamTrack
+import av
+import fractions
+import traceback
+import gzip
 try:
     import pyautogui
 except Exception:
@@ -77,6 +83,12 @@ def dbg(msg):
     if VERBOSE:
         print(f'[debug] {msg}')
     _write_log(DEBUG_LOGGER, msg, logging.DEBUG)
+
+
+def vdbg(msg):
+    if VERBOSE:
+        print(f'[debug] {msg}')
+        _write_log(DEBUG_LOGGER, msg, logging.DEBUG)
 
 
 def info(msg):
@@ -233,6 +245,12 @@ pyautogui.PAUSE = 0
 FIXED_FRAME_WIDTH = 1280
 FIXED_FRAME_HEIGHT = 720
 
+try:
+    import mss
+    _MSS_AVAILABLE = True
+except Exception:
+    _MSS_AVAILABLE = False
+
 parser = argparse.ArgumentParser(description='Remote control server')
 parser.add_argument('--password', default=None, help='Optional password required for client authentication')
 parser.add_argument('--relay-url', default=os.environ.get('RELAY_URL', 'https://remote-control-ee7w.onrender.com'), help='Render Socket.IO relay URL')
@@ -240,6 +258,11 @@ parser.add_argument('--server-id', default=None, help='Unique ID for this server
 parser.add_argument('--rc-verbose', action='store_true', help='Enable verbose debug prints')
 args = parser.parse_args()
 VERBOSE = bool(getattr(args, 'rc_verbose', False))
+CAPTURE_FPS = 30
+MIN_QUALITY = 40
+MAX_QUALITY = 85
+KEYFRAME_INTERVAL = 50
+ADAPTIVE_THRESHOLD = 2.0
 
 if not args.server_id:
     host_name = socket.gethostname().replace(' ', '-').lower()
@@ -329,6 +352,69 @@ def _create_webrtc_event_loop():
 frame_seq = 0
 
 
+class ScreenVideoTrack(VideoStreamTrack):
+    def __init__(self, capture_func, session, fps=None):
+        super().__init__()
+        self.capture_func = capture_func
+        self.session = session
+        self.fps = fps or CAPTURE_FPS
+        self.interval = 1.0 / float(self.fps) if self.fps and self.fps > 0 else 1.0 / 30.0
+        self._stopped = False
+        self._last_pts = 0
+        self._sent_log = 0
+        try:
+            dbg(f'ScreenVideoTrack: initialized fps={self.fps} for session={getattr(session, "browser_sid", None) or session.get("browser_sid", "n/a")}')
+        except Exception:
+            pass
+
+    async def recv(self):
+        if self._stopped:
+            raise Exception('track stopped')
+        t0 = time.time()
+        frame = await asyncio.to_thread(self.capture_func)
+        if frame is None:
+            await asyncio.sleep(0.05)
+            return await self.recv()
+
+        try:
+            try:
+                video_frame = av.VideoFrame.from_ndarray(frame, format='bgr24')
+            except Exception:
+                try:
+                    rgb = frame[..., ::-1]
+                    video_frame = av.VideoFrame.from_ndarray(rgb, format='rgb24')
+                except Exception:
+                    raise
+            pts = int(time.time() * 1000)
+            if pts <= self._last_pts:
+                pts = self._last_pts + 1
+            self._last_pts = pts
+            video_frame.pts = pts
+            video_frame.time_base = fractions.Fraction(1, 1000)
+            try:
+                if self._sent_log < 5:
+                    dbg(f'ScreenVideoTrack: produced frame pts={video_frame.pts} size={getattr(frame, "shape", None)}')
+                    self._sent_log += 1
+            except Exception:
+                pass
+
+            elapsed = time.time() - t0
+            to_wait = max(0, self.interval - elapsed)
+            if to_wait > 0:
+                await asyncio.sleep(to_wait)
+            return video_frame
+        except Exception:
+            await asyncio.sleep(0.02)
+            return await self.recv()
+
+    def stop(self):
+        self._stopped = True
+        try:
+            super().stop()
+        except Exception:
+            pass
+
+
 @relay_socket.on('request_session')
 def on_request_session(data):
     data = data or {}
@@ -372,6 +458,15 @@ async def _async_cleanup_webrtc_session(browser_sid, remove_session=True):
                 channel.close()
         except Exception:
             pass
+    try:
+        video_track = session.get('video_track') if session else None
+        if video_track is not None:
+            try:
+                video_track.stop()
+            except Exception:
+                pass
+    except Exception:
+        pass
 
     with webrtc_sessions_lock:
         session = webrtc_sessions.get(browser_sid)
@@ -474,6 +569,15 @@ def _cleanup_webrtc_session(browser_sid, remove_session=True):
                         channel.close()
                 except Exception:
                     pass
+        try:
+            video_track = session.get('video_track') if session else None
+            if video_track is not None:
+                try:
+                    video_track.stop()
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
         session['frame_task'] = None
         session['channel'] = None
@@ -564,6 +668,25 @@ def _build_candidate(candidate_data):
         return None
 
 
+def _parse_turn_servers_from_env():
+    urls = os.environ.get('TURN_URLS')
+    if not urls:
+        return []
+    url_list = [u.strip() for u in urls.split(',') if u.strip()]
+    user = os.environ.get('TURN_USER')
+    passwd = os.environ.get('TURN_PASS')
+    servers = []
+    for u in url_list:
+        try:
+            if user and passwd:
+                servers.append(RTCIceServer(urls=[u], username=user, credential=passwd))
+            else:
+                servers.append(RTCIceServer(urls=[u]))
+        except Exception:
+            continue
+    return servers
+
+
 @relay_socket.on('webrtc_offer')
 def on_webrtc_offer(data):
     data = data or {}
@@ -651,9 +774,41 @@ def on_webrtc_candidate(data):
 
 def _run_webrtc_offer(browser_sid, offer):
     async def _async_handle_offer():
-        pc = RTCPeerConnection(configuration=RTCConfiguration([
-            RTCIceServer(urls=['stun:stun.l.google.com:19302']),
-        ]))
+        ice_servers = [RTCIceServer(urls=['stun:stun.l.google.com:19302'])]
+        try:
+            extra = _parse_turn_servers_from_env()
+            if extra:
+                ice_servers.extend(extra)
+        except Exception:
+            pass
+        pc = RTCPeerConnection(configuration=RTCConfiguration(ice_servers))
+        @pc.on('iceconnectionstatechange')
+        def _on_iceconnectionstatechange():
+            try:
+                dbg(f'iceConnectionState change for browser_sid={browser_sid}: {pc.iceConnectionState}')
+            except Exception:
+                dbg('iceConnectionState change (failed to read state)')
+
+        @pc.on('connectionstatechange')
+        def _on_connectionstatechange():
+            try:
+                dbg(f'connectionState change for browser_sid={browser_sid}: {pc.connectionState}')
+            except Exception:
+                dbg('connectionState change (failed to read state)')
+
+        @pc.on('signalingstatechange')
+        def _on_signalingstatechange():
+            try:
+                dbg(f'signalingState change for browser_sid={browser_sid}: {pc.signalingState}')
+            except Exception:
+                dbg('signalingState change (failed to read state)')
+
+        @pc.on('track')
+        def _on_track(track):
+            try:
+                dbg(f'pc.ontrack for browser_sid={browser_sid}: kind={getattr(track, "kind", None)} id={getattr(track, "id", None)}')
+            except Exception:
+                dbg('pc.ontrack event (failed to log)')
         with webrtc_sessions_lock:
             session = webrtc_sessions.get(browser_sid)
             if not session:
@@ -692,27 +847,28 @@ def _run_webrtc_offer(browser_sid, offer):
                     dbg(f'datachannel not open yet for browser_sid={browser_sid} readyState={channel.readyState}')
                     return
                 session['open'] = True
-                info(f'datachannel open, starting frame sender for browser_sid={browser_sid}')
-                coro = _send_webrtc_frames(browser_sid)
+                info(f'datachannel open for control messages browser_sid={browser_sid}')
                 try:
-                    loop = asyncio.get_running_loop()
-                    if loop is session['loop']:
-                        session['frame_task'] = asyncio.ensure_future(coro)
-                    else:
-                        if loop_running(session.get('loop')):
-                            session['frame_task'] = asyncio.run_coroutine_threadsafe(coro, session['loop'])
-                        else:
-                            dbg(f"not scheduling frame sender; session loop not running for browser_sid={browser_sid}")
-                except RuntimeError:
+                    coro = _send_webrtc_frames(browser_sid)
                     if loop_running(session.get('loop')):
                         session['frame_task'] = asyncio.run_coroutine_threadsafe(coro, session['loop'])
                     else:
-                        dbg(f"runtimeerror: session loop not running for browser_sid={browser_sid}")
+                        try:
+                            loop = asyncio.get_event_loop()
+                            if loop is session['loop']:
+                                session['frame_task'] = asyncio.ensure_future(coro)
+                            else:
+                                dbg(f'not scheduling frame sender; session loop mismatch for browser_sid={browser_sid}')
+                        except RuntimeError:
+                            dbg(f'no running loop to schedule frame sender for browser_sid={browser_sid}')
+                except Exception as exc:
+                    dbg(f'failed to schedule frame sender: {exc}')
 
             @channel.on("open")
             def on_open():
                 info(f'datachannel open event for browser_sid={browser_sid}')
                 start_frame_sender()
+
 
             @channel.on("message")
             def on_message(message):
@@ -749,18 +905,154 @@ def _run_webrtc_offer(browser_sid, offer):
                     dbg(f'emitted ICE candidate to browser browser_sid={browser_sid}')
                 except Exception as exc:
                     error(f'emit candidate failed {exc}')
+        try:
+            vdbg(f'offer sdp snippet for browser_sid={browser_sid}: {offer.get("sdp", "")[:2000].replace("\n", "\\n") if isinstance(offer, dict) else str(type(offer))}')
+        except Exception:
+            pass
 
         await pc.setRemoteDescription(RTCSessionDescription(sdp=offer['sdp'], type=offer['type']))
+        try:
+            trs = pc.getTransceivers()
+            dbg(f'transceivers for browser_sid={browser_sid}: count={len(trs)}')
+            for i, t in enumerate(trs):
+                try:
+                    od = getattr(t, '_offerDirection', None)
+                    dbg(f' transceiver[{i}] kind={t.kind} direction={getattr(t, "direction", None)} recv_direction={od}')
+                    if od not in getattr(sdp_module, 'DIRECTIONS', []):
+                        dbg(f'  sanitizing transceiver[{i}] _offerDirection from {od} to sendrecv')
+                        try:
+                            setattr(t, '_offerDirection', 'sendrecv')
+                        except Exception:
+                            dbg(f'  failed to set _offerDirection for transceiver[{i}]')
+                except Exception:
+                    dbg(f' transceiver[{i}] debug failed')
+        except Exception:
+            pass
         with webrtc_sessions_lock:
             session = webrtc_sessions.get(browser_sid)
             if session:
                 session['remote_description_set'] = True
+        try:
+            video_track = ScreenVideoTrack(capture_screen_dxgi, session)
+            try:
+                transceiver = pc.addTransceiver('video', direction='sendonly')
+                sender = transceiver.sender
+                res = sender.replaceTrack(video_track)
+                if asyncio.iscoroutine(res):
+                    await res
+                dbg(f'added video transceiver and replaced track for browser_sid={browser_sid}')
+                try:
+                    senders = pc.getSenders()
+                    dbg(f'senders count={len(senders)} for browser_sid={browser_sid}')
+                    for si, s in enumerate(senders):
+                        try:
+                            dbg(f' sender[{si}] track={getattr(s, "track", None)} kind={getattr(s, "track", None) and getattr(s.track, "kind", None)}')
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+            except Exception as exc2:
+                dbg(f'addTransceiver failed, falling back to addTrack: {exc2}')
+                pc.addTrack(video_track)
+                try:
+                    senders = pc.getSenders()
+                    dbg(f'fallback senders count={len(senders)} for browser_sid={browser_sid}')
+                except Exception:
+                    pass
+
+            with webrtc_sessions_lock:
+                session = webrtc_sessions.get(browser_sid)
+                if session is not None:
+                    session['video_track'] = video_track
+        except Exception as exc:
+            error(f'failed to add video track for browser_sid={browser_sid}: {exc}\n{traceback.format_exc()}')
         info(f'remote description set for browser_sid={browser_sid}')
         dbg(f'peer connection state after remote description: {pc.connectionState} iceConnectionState={pc.iceConnectionState}')
         answer = await pc.createAnswer()
+        try:
+            trs = pc.getTransceivers()
+            for i, t in enumerate(trs):
+                try:
+                    a = getattr(t, 'direction', None)
+                    b = getattr(t, '_offerDirection', None)
+                    valid = getattr(sdp_module, 'DIRECTIONS', ['sendrecv', 'sendonly', 'recvonly', 'inactive'])
+                    changed = False
+                    if not isinstance(a, str) or a not in valid:
+                        dbg(f'sanitize transceiver[{i}].direction: {a} -> sendrecv')
+                        try:
+                            setattr(t, 'direction', 'sendrecv')
+                            changed = True
+                        except Exception:
+                            pass
+                    if not isinstance(b, str) or b not in valid:
+                        dbg(f'sanitize transceiver[{i}]._offerDirection: {b} -> sendrecv')
+                        try:
+                            setattr(t, '_offerDirection', 'sendrecv')
+                            changed = True
+                        except Exception:
+                            pass
+                    if changed:
+                        dbg(f'transceiver[{i}] sanitized')
+                except Exception:
+                    dbg(f'failed to sanitize transceiver[{i}]')
+        except Exception:
+            dbg('transceiver sanitization failed')
+
         await pc.setLocalDescription(answer)
+        try:
+            try:
+                senders = pc.getSenders()
+            except Exception:
+                senders = []
+            for s in senders:
+                try:
+                    if getattr(s, 'track', None) is None:
+                        continue
+                    if getattr(s.track, 'kind', None) != 'video':
+                        continue
+                    params = None
+                    try:
+                        params = s.getParameters()
+                    except Exception:
+                        params = None
+                    if params is None:
+                        continue
+                    if not getattr(params, 'encodings', None):
+                        try:
+                            params.encodings = [{}]
+                        except Exception:
+                            pass
+                    with webrtc_sessions_lock:
+                        sess = webrtc_sessions.get(browser_sid)
+                    target_bitrate = None
+                    if sess:
+                        target_bitrate = sess.get('bitrate') or sess.get('max_quality_bitrate')
+                    if not target_bitrate:
+                        target_bitrate = 800_000
+                    try:
+                        params.encodings[0]['maxBitrate'] = int(target_bitrate)
+                        if sess and sess.get('fps'):
+                            params.encodings[0]['maxFramerate'] = int(sess.get('fps'))
+                    except Exception:
+                        pass
+                    try:
+                        await s.setParameters(params)
+                    except Exception:
+                        try:
+                            s.setParameters(params)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+        except Exception:
+            pass
         info(f'local description set for browser_sid={browser_sid}')
         dbg(f'created answer for browser_sid={browser_sid} sdp_length={len(pc.localDescription.sdp) if pc.localDescription else 0}')
+        try:
+            if VERBOSE:
+                dbg(f'answer sdp snippet for browser_sid={browser_sid}: {pc.localDescription.sdp[:2000].replace("\n", "\\n") if pc.localDescription else ""}')
+        except Exception:
+            pass
         relay_socket.emit('webrtc_answer', {
             'browser_sid': browser_sid,
             'answer': {
@@ -811,14 +1103,14 @@ def _run_webrtc_offer(browser_sid, offer):
         try:
             f.result()
         except Exception as exc:
-            error(f'[webrtc] offer task failed: {exc}')
+            error(f'[webrtc] offer task failed: {exc}\n{traceback.format_exc()}')
     future.add_done_callback(_offer_done)
 
 
 async def _send_webrtc_frames(browser_sid):
     global frame_seq
-    dbg(f'_send_webrtc_frames starting for browser_sid={browser_sid}')
-    dbg(f'initial frame_seq={frame_seq}')
+    vdbg(f'_send_webrtc_frames starting for browser_sid={browser_sid}')
+    vdbg(f'initial frame_seq={frame_seq}')
     while True:
         try:
             with webrtc_sessions_lock:
@@ -826,57 +1118,254 @@ async def _send_webrtc_frames(browser_sid):
                 channel = session.get('channel') if session else None
                 is_open = bool(session and session.get('open')) if session else False
             if not is_open or not channel or channel.readyState != 'open':
-                dbg(f'_send_webrtc_frames stopping; channel not open for browser_sid={browser_sid}')
+                vdbg(f'_send_webrtc_frames stopping; channel not open for browser_sid={browser_sid}')
                 return
 
             frame = await asyncio.to_thread(capture_screen_dxgi)
             if frame is None:
                 await asyncio.sleep(0.05)
                 continue
+            try:
+                target_w = int(session.get('target_w') or FIXED_FRAME_WIDTH) if session else FIXED_FRAME_WIDTH
+                target_h = int(session.get('target_h') or FIXED_FRAME_HEIGHT) if session else FIXED_FRAME_HEIGHT
+                if frame.shape[1] != target_w or frame.shape[0] != target_h:
+                    interp = cv2.INTER_LINEAR if (target_w >= frame.shape[1] or target_h >= frame.shape[0]) else cv2.INTER_AREA
+                    frame = cv2.resize(frame, (target_w, target_h), interpolation=interp)
+            except Exception:
+                pass
 
             qv = int(session.get('quality') or 0) if session else 0
             if qv > 0:
                 try:
                     quality = int(qv)
                 except Exception:
-                    quality = 70
+                    quality = max(MIN_QUALITY, min(MAX_QUALITY, 70))
             else:
                 try:
-                    buffered = getattr(channel, 'bufferedAmount', 0) or 0
-                    orig_h, orig_w = frame.shape[:2]
-                    area = orig_h * orig_w
-                    default_area = FIXED_FRAME_WIDTH * FIXED_FRAME_HEIGHT
-                    if buffered > 65536:
-                        quality = 40
-                    elif buffered > 32768:
-                        quality = 55
+                    last_small = session.get('last_small') if session else None
+                    hq_until = int(session.get('hq_until') or 0) if session else 0
+                    curr_seq = frame_seq
+                    if KEYFRAME_INTERVAL > 0 and (curr_seq % KEYFRAME_INTERVAL) == 0:
+                        quality = MAX_QUALITY
+                        hq_until = curr_seq + 2
                     else:
-                        quality = 70 if area > default_area else 85
+                        try:
+                            orig_h, orig_w = frame.shape[:2]
+                            small_w = 320
+                            small_h = max(1, int(small_w * orig_h / max(1, orig_w)))
+                            small = cv2.resize(frame, (small_w, small_h), interpolation=cv2.INTER_LINEAR)
+                            gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+                            if last_small is None:
+                                diff_pct = 100.0
+                            else:
+                                diff = cv2.absdiff(gray, last_small)
+                                changed = (diff > 10).astype('uint8')
+                                diff_pct = float(changed.sum()) / (changed.size) * 100.0
+                        except Exception:
+                            diff_pct = 100.0
+                        if hq_until and frame_seq <= hq_until:
+                            quality = MAX_QUALITY
+                        elif diff_pct >= ADAPTIVE_THRESHOLD:
+                            quality = MAX_QUALITY
+                            hq_until = frame_seq + 2
+                        else:
+                            buffered = getattr(channel, 'bufferedAmount', 0) or 0
+                            if buffered > 65536:
+                                quality = MIN_QUALITY
+                            elif buffered > 32768:
+                                quality = max(MIN_QUALITY, int((MIN_QUALITY + MAX_QUALITY) / 2))
+                            else:
+                                quality = MAX_QUALITY
+                        try:
+                            session['last_small'] = gray
+                            session['hq_until'] = hq_until
+                        except Exception:
+                            pass
                 except Exception:
-                    quality = 70
+                    quality = int((MIN_QUALITY + MAX_QUALITY) / 2)
+            send_region = None
+            try:
+                last_full = session.get('last_full_frame') if session else None
+                if last_full is not None:
+                    try:
+                        h, w = frame.shape[:2]
+                        small_w = 320
+                        small_h = max(1, int(small_w * h / max(1, w)))
+                        curr_small = cv2.resize(frame, (small_w, small_h), interpolation=cv2.INTER_LINEAR)
+                        last_small = cv2.resize(last_full, (small_w, small_h), interpolation=cv2.INTER_LINEAR)
+                        curr_gray = cv2.cvtColor(curr_small, cv2.COLOR_BGR2GRAY)
+                        last_gray = cv2.cvtColor(last_small, cv2.COLOR_BGR2GRAY)
+                        diff = cv2.absdiff(curr_gray, last_gray)
+                        _, diff_bin = cv2.threshold(diff, 15, 255, cv2.THRESH_BINARY)
+                        try:
+                            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3,3))
+                            diff_bin = cv2.dilate(diff_bin, kernel, iterations=1)
+                        except Exception:
+                            pass
+                        contours, _ = cv2.findContours(diff_bin, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                        if contours:
+                            x_coords = []
+                            y_coords = []
+                            for c in contours:
+                                pts = c.reshape(-1,2)
+                                x_coords.append(pts[:,0].min())
+                                x_coords.append(pts[:,0].max())
+                                y_coords.append(pts[:,1].min())
+                                y_coords.append(pts[:,1].max())
+                            x_min = min(x_coords)
+                            x_max = max(x_coords)
+                            y_min = min(y_coords)
+                            y_max = max(y_coords)
+                            pad_small = 2
+                            x_min = max(0, int(x_min - pad_small))
+                            y_min = max(0, int(y_min - pad_small))
+                            x_max = min(small_w-1, int(x_max + pad_small))
+                            y_max = min(small_h-1, int(y_max + pad_small))
+                            sx = int(round(x_min * (w / small_w)))
+                            sy = int(round(y_min * (h / small_h)))
+                            ex = int(round((x_max + 1) * (w / small_w)))
+                            ey = int(round((y_max + 1) * (h / small_h)))
+                            pad_full = max(8, int(max(w,h) * 0.02))
+                            sx = max(0, sx - pad_full)
+                            sy = max(0, sy - pad_full)
+                            ex = min(w, ex + pad_full)
+                            ey = min(h, ey + pad_full)
+                            bw = ex - sx; bh = ey - sy
+                            min_dim = 32
+                            if bw < min_dim:
+                                extra = (min_dim - bw) // 2
+                                sx = max(0, sx - extra);
+                                ex = min(w, ex + extra);
+                                bw = ex - sx
+                            if bh < min_dim:
+                                extra = (min_dim - bh) // 2
+                                sy = max(0, sy - extra);
+                                ey = min(h, ey + extra);
+                                bh = ey - sy
+                            area_frac = (bw * bh) / float(max(1, w*h))
+                            if area_frac <= 0.4 and bw > 8 and bh > 8:
+                                send_region = (sx, sy, bw, bh)
+                            dbg(f'region-diff calc browser_sid={browser_sid} small_bbox=({x_min},{y_min},{x_max},{y_max}) full_bbox=({sx},{sy},{ex},{ey}) area_frac={area_frac:.3f} contours={len(contours)}')
+                        session['last_full_small'] = curr_gray
+                    except Exception:
+                        send_region = None
+                else:
+                    send_region = None
+            except Exception:
+                send_region = None
+            def encode_frame_bytes(frame_or_crop, q):
+                ok, buffer = cv2.imencode('.jpg', frame_or_crop, [cv2.IMWRITE_JPEG_QUALITY, int(q)])
+                if not ok:
+                    raise RuntimeError('imencode failed')
+                return buffer.tobytes() if isinstance(buffer, (bytearray, bytes)) else bytes(buffer)
+            try:
+                buffered_now = getattr(channel, 'bufferedAmount', 0) or 0
+            except Exception:
+                buffered_now = 0
+            try:
+                if buffered_now > 131072:
+                    dbg(f'dropping frame due to high bufferedAmount={buffered_now} browser_sid={browser_sid} frame_seq={frame_seq}')
+                    frame_seq += 1
+                    try:
+                        session['last_full_frame'] = frame.copy()
+                    except Exception:
+                        pass
+                    await asyncio.sleep(0.02)
+                    continue
+            except Exception:
+                pass
+            try:
+                h, w = frame.shape[:2]
+                area_frac = 1.0
+                if send_region:
+                    _, _, bw, bh = send_region
+                    area_frac = (bw * bh) / float(max(1, w * h))
+                else:
+                    bw, bh = w, h
+                    area_frac = 1.0
+                if buffered_now > 32768 and area_frac > 0.4:
+                    old_q = quality
+                    quality = max(MIN_QUALITY, int(quality * 0.6))
+                    dbg(f'adjusting quality for backlog {buffered_now}: {old_q} -> {quality} area_frac={area_frac:.2f} browser_sid={browser_sid}')
+            except Exception:
+                pass
 
-            def encode_frame():
-                _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
-                return base64.b64encode(buffer).decode('ascii')
-
-            encoded_frame = await asyncio.to_thread(encode_frame)
-            with cursor_lock:
-                cursor_b64 = cursor_cache.get('b64')
-                hotspot_x = cursor_cache.get('hx', 0)
-                hotspot_y = cursor_cache.get('hy', 0)
-                cursor_fmt = cursor_cache.get('fmt', 'png')
-
-            payload = {
+            if send_region:
+                sx, sy, bw, bh = send_region
+                try:
+                    crop = frame[sy:sy+bh, sx:sx+bw]
+                    encoded_bytes = await asyncio.to_thread(encode_frame_bytes, crop, quality)
+                except Exception:
+                    encoded_bytes = await asyncio.to_thread(encode_frame_bytes, frame, quality)
+                    send_region = None
+            else:
+                encoded_bytes = await asyncio.to_thread(encode_frame_bytes, frame, quality)
+            try:
+                with cursor_lock:
+                    cursor_b64 = cursor_cache.get('b64')
+                    hotspot_x = cursor_cache.get('hx', 0)
+                    hotspot_y = cursor_cache.get('hy', 0)
+                    cursor_fmt = cursor_cache.get('fmt', 'png')
+                last_sent = session.get('last_sent_cursor_b64')
+                if cursor_b64 is not None and cursor_b64 != last_sent:
+                    try:
+                        payload = json.dumps({
+                            'type': 'cursor',
+                            'cursorImage': cursor_b64,
+                            'cursorHotspotX': hotspot_x,
+                            'cursorHotspotY': hotspot_y,
+                            'cursorFormat': cursor_fmt,
+                        })
+                        channel.send(payload)
+                        session['last_sent_cursor_b64'] = cursor_b64
+                        dbg(f'sent cursor update browser_sid={browser_sid} hotspot=({hotspot_x},{hotspot_y})')
+                    except Exception:
+                        pass
+                elif cursor_b64 is None and session.get('last_sent_cursor_b64') is not None:
+                    try:
+                        payload = json.dumps({'type': 'cursor', 'cursorRemoved': True})
+                        channel.send(payload)
+                        session['last_sent_cursor_b64'] = None
+                    except Exception:
+                        pass
+            except Exception:
+                cursor_b64 = None
+                hotspot_x = 0
+                hotspot_y = 0
+                cursor_fmt = 'png'
+            meta = {
                 'type': 'frame',
                 'frame_id': frame_seq,
-                'frame': encoded_frame,
-                'cursorImage': cursor_b64,
                 'cursorHotspotX': hotspot_x,
                 'cursorHotspotY': hotspot_y,
                 'cursorFormat': cursor_fmt,
+                'region': None,
+                'full_w': frame.shape[1],
+                'full_h': frame.shape[0],
             }
+            if send_region:
+                meta['region'] = {'x': sx, 'y': sy, 'w': bw, 'h': bh}
             frame_seq += 1
-            message = json.dumps(payload)
+            meta_bytes = json.dumps(meta).encode('utf-8')
+            payload_bytes = encoded_bytes
+            try:
+                if session and session.get('compress'):
+                    try:
+                        gz = gzip.compress(encoded_bytes)
+                        if len(gz) + 16 < len(encoded_bytes):
+                            payload_bytes = gz
+                            meta['compressed'] = 'gzip'
+                            meta_bytes = json.dumps(meta).encode('utf-8')
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            message = meta_bytes + b'\x1e' + payload_bytes
+            try:
+                session['last_full_frame'] = frame.copy()
+            except Exception:
+                pass
             try:
                 buffered = getattr(channel, 'bufferedAmount', None)
                 if buffered is not None and buffered > 65536:
@@ -885,11 +1374,22 @@ async def _send_webrtc_frames(browser_sid):
 
                 if getattr(channel, 'bufferedAmountLowThreshold', None) is not None:
                     channel.bufferedAmountLowThreshold = 32768
-
-                channel.send(message)
+                try:
+                    try:
+                        if meta.get('region'):
+                            dbg(f"sending REGION frame id={meta.get('frame_id')} region={meta.get('region')} jpeg_bytes={len(encoded_bytes)} browser_sid={browser_sid}")
+                        else:
+                            dbg(f"sending FULL frame id={meta.get('frame_id')} size={len(encoded_bytes)} browser_sid={browser_sid}")
+                    except Exception:
+                        pass
+                    channel.send(message)
+                except Exception:
+                    try:
+                        channel.send(bytes(message))
+                    except Exception:
+                        error(f'channel.send failed for browser_sid={browser_sid}')
                 if frame_seq % 50 == 0:
                     dbg(f'sent frame {frame_seq} browser_sid={browser_sid} size={len(message)} buffered={getattr(channel, "bufferedAmount", "n/a")}')
-                    dbg(f'cursor present={bool(cursor_b64)} hotspot=({hotspot_x},{hotspot_y}) format={cursor_fmt}')
                     dbg(f'cursor present={bool(cursor_b64)} hotspot=({hotspot_x},{hotspot_y}) format={cursor_fmt}')
             except Exception as exc:
                 error(f'frame send failed browser_sid={browser_sid} exc={repr(exc)}')
@@ -940,6 +1440,18 @@ else:
 
 
 def capture_screen_dxgi():
+    if _MSS_AVAILABLE:
+        try:
+            with mss.mss() as s:
+                monitor = s.monitors[1] if len(s.monitors) > 1 else s.monitors[0]
+                img = s.grab(monitor)
+                frame = np.array(img)
+                if frame.shape[2] == 4:
+                    frame = frame[..., :3]
+                return frame
+        except Exception:
+            pass
+
     try:
         pil_img = ImageGrab.grab()
         frame = np.array(pil_img)
@@ -1250,6 +1762,69 @@ def capture_cursor_worker():
 
 def execute_command(cmd_data, browser_sid=None, ws_settings=None):
     cmd_type = cmd_data.get("type")
+    if cmd_type == 'set_capture_params':
+        try:
+            with webrtc_sessions_lock:
+                session = webrtc_sessions.get(browser_sid)
+                if session is None and ws_settings is not None:
+                    session = ws_settings
+            if session is not None:
+                fps = cmd_data.get('fps')
+                if fps:
+                    try:
+                        session['fps'] = int(fps)
+                    except Exception:
+                        pass
+                mq = cmd_data.get('min_quality')
+                if mq is not None:
+                    try:
+                        session['min_quality'] = int(mq)
+                    except Exception:
+                        pass
+                Mq = cmd_data.get('max_quality')
+                if Mq is not None:
+                    try:
+                        session['max_quality'] = int(Mq)
+                    except Exception:
+                        pass
+                ki = cmd_data.get('keyframe_interval')
+                if ki is not None:
+                    try:
+                        session['keyframe_interval'] = int(ki)
+                    except Exception:
+                        pass
+                at = cmd_data.get('adaptive_threshold')
+                if at is not None:
+                    try:
+                        session['adaptive_threshold'] = float(at)
+                    except Exception:
+                        pass
+                br = cmd_data.get('bitrate')
+                if br is not None:
+                    try:
+                        session['bitrate'] = int(br)
+                    except Exception:
+                        pass
+                tw = cmd_data.get('target_width')
+                th = cmd_data.get('target_height')
+                if tw is not None and th is not None:
+                    try:
+                        session['target_w'] = int(tw)
+                        session['target_h'] = int(th)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        return
+    if cmd_type == 'request_keyframe':
+        try:
+            with webrtc_sessions_lock:
+                session = webrtc_sessions.get(browser_sid)
+                if session is not None:
+                    session['hq_until'] = int(frame_seq) + 2
+        except Exception:
+            pass
+        return
     if cmd_type == "mouse_move":
         x, y = cmd_data.get("x"), cmd_data.get("y")
         normalized = cmd_data.get("normalized", False)
@@ -1487,7 +2062,6 @@ if os.name == 'nt':
         kernel32 = ctypes.windll.kernel32
         HandlerRoutine = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.DWORD)
         def _console_ctrl_handler(ctrl_type):
-            # 0=CTRL_C_EVENT, 1=CTRL_BREAK_EVENT, 2=CTRL_CLOSE_EVENT, 5=CTRL_LOGOFF_EVENT, 6=CTRL_SHUTDOWN_EVENT
             try:
                 if ctrl_type in (0, 1, 2, 5, 6):
                     if not shutdown_event.is_set():
