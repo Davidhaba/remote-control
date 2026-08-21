@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Remote Control</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
@@ -17,74 +17,83 @@
 <body>
 
     <div id="view-connect">
-        <div class="app-header">
-            <div class="app-title">📱 Remote Control</div>
-        </div>
+        <header class="connect-header">
+            <div class="app-title"><span class="brand-mark"><i class="fa fa-crosshairs"></i></span> Remote Control</div>
+        </header>
 
-        <div class="layout">
-            <div class="card sidebar">
-                <div class="tabs">
-                    <button class="tab-btn active" onclick="switchTab('desktop')"><i class="fa fa-desktop"></i>
-                        Desktop</button>
-                    <button class="tab-btn" onclick="switchTab('mobile')"><i class="fa fa-mobile"></i> Mobile</button>
+        <main class="connect-workspace">
+            <aside class="connect-aside">
+                <div class="aside-kicker">REMOTE WORKSPACE</div>
+                <h1>
+                    <span>Connect to</span>
+                    <em>your devices.</em>
+                </h1>
+                <p>Choose a computer or mobile device to start a secure session.</p>
+                <div class="aside-footer"><span class="footer-line"></span><span>Private session</span></div>
+            </aside>
+
+            <section class="card sidebar connect-card">
+                <div class="tabs" role="tablist" aria-label="Device type">
+                    <span class="tab-indicator" aria-hidden="true"></span>
+                    <button type="button" role="tab" id="desktop-tab" class="tab-btn active" data-tab="desktop" aria-controls="tab-desktop" aria-selected="true" onclick="switchTab('desktop', event)"><i class="fa fa-desktop"></i> Desktop</button>
+                    <button type="button" role="tab" id="mobile-tab" class="tab-btn" data-tab="mobile" aria-controls="tab-mobile" aria-selected="false" onclick="switchTab('mobile', event)"><i class="fa fa-mobile"></i> Mobile</button>
                 </div>
 
-                <div id="tab-desktop" class="tab-content active">
+                <div class="tab-stage">
+                    <div id="tab-desktop" class="tab-content active" role="tabpanel" aria-labelledby="desktop-tab" aria-hidden="false">
                     <div class="card-header">
                         <div>
+                            <div class="section-kicker">DESKTOP HOSTS</div>
                             <div class="card-title">Available servers</div>
-                            <div class="card-subtitle">Select a host from the local relay and connect securely.</div>
+                            <div class="card-subtitle">Select a host to open a remote session.</div>
                         </div>
-                        <div class="card-pill">Local network</div>
+                        <div class="card-pill">LAN</div>
                     </div>
 
                     <div class="controls">
-                        <button class="btn btn-primary" onclick="discoverServers()"><i class="fa fa-search"></i>
-                            Discover servers</button>
+                        <button class="btn btn-primary" onclick="discoverServers()"><i class="fa fa-refresh"></i> Scan for hosts</button>
                     </div>
 
                     <div class="search">
-                        <input id="serverSearch" placeholder="Filter servers..." oninput="filterServers()">
-                        <button class="btn btn-ghost"
-                            onclick="document.getElementById('serverSearch').value='';filterServers();">✖</button>
+                        <i class="fa fa-search search-icon"></i>
+                        <input id="serverSearch" placeholder="Search servers" oninput="filterServers()">
+                        <button class="btn btn-ghost clear-search" aria-label="Clear search"
+                            onclick="document.getElementById('serverSearch').value='';filterServers();">&times;</button>
                     </div>
 
                     <div id="serverList" class="server-list"></div>
+                    <p class="info-text subdued">Only machines currently visible to the relay are shown.</p>
+                    </div>
 
-                    <p class="info-text subdued">Connect to a remote computer and
-                        control it.</p>
-                </div>
-
-                <div id="tab-mobile" class="tab-content">
+                    <div id="tab-mobile" class="tab-content" role="tabpanel" aria-labelledby="mobile-tab" aria-hidden="true">
                     <div class="card-header">
                         <div>
-                            <div class="card-title">Android devices</div>
-                            <div class="card-subtitle">Find connected phones and tablets with ADB debugging enabled.
-                            </div>
+                            <div class="section-kicker">ANDROID DEVICES</div>
+                            <div class="card-title">Connected devices</div>
+                            <div class="card-subtitle">Find phones and tablets with ADB enabled.</div>
                         </div>
-                        <div class="card-pill">Mobile</div>
+                        <div class="card-pill">ADB</div>
                     </div>
 
                     <div class="controls">
-                        <button class="btn btn-primary" onclick="discoverAndroidDevices()"><i class="fa fa-search"></i>
-                            Discover devices</button>
+                        <button class="btn btn-primary" onclick="discoverAndroidDevices()"><i class="fa fa-refresh"></i> Scan for devices</button>
                     </div>
 
                     <div class="search">
-                        <input id="deviceSearch" placeholder="Filter devices..." oninput="filterAndroidDevices()">
-                        <button class="btn btn-ghost"
-                            onclick="document.getElementById('deviceSearch').value='';filterAndroidDevices();">✖</button>
+                        <i class="fa fa-search search-icon"></i>
+                        <input id="deviceSearch" placeholder="Search devices" oninput="filterAndroidDevices()">
+                        <button class="btn btn-ghost clear-search" aria-label="Clear search"
+                            onclick="document.getElementById('deviceSearch').value='';filterAndroidDevices();">&times;</button>
                     </div>
 
                     <div id="deviceList" class="server-list"></div>
-
-                    <p class="info-text subdued">Requires ADB and Android device
-                        connected via USB with USB Debugging enabled.</p>
+                    <p class="info-text subdued">Connect an Android device with USB debugging enabled.</p>
+                    </div>
                 </div>
 
                 <div id="status" class="status">Disconnected</div>
-            </div>
-        </div>
+            </section>
+        </main>
     </div>
 
     <div id="view-screen" class="view-screen">
@@ -154,7 +163,7 @@
             </div>
         </div>
 
-        <div class="bottom-panel" id="bottomPanel">
+        <div class="bottom-panel" id="bottomPanel" aria-hidden="true">
             <div class="panel-toolbar">
                 <button class="btn btn-ghost active" data-tab="mouse"
                     onclick="showKeyboardPanelTab('mouse')">Mouse</button>
@@ -175,7 +184,7 @@
                         </div>
                     </div>
                 </div>
-                <div class="panel-tab" id="panel-keyboard" style="display:none;">
+                <div class="panel-tab" id="panel-keyboard">
                     <div class="control-section">
                         <div class="control-title"><i class="fa fa-keyboard-o"></i> Keyboard</div>
                         <div class="kbd-area">
@@ -192,7 +201,7 @@
                         </div>
                     </div>
                 </div>
-                <div class="panel-tab" id="panel-navigation" style="display:none;">
+                <div class="panel-tab" id="panel-navigation">
                     <div class="control-section">
                         <div class="control-title"><i class="fa fa-location-arrow"></i> Navigation</div>
                         <div class="info-row">
@@ -237,6 +246,9 @@
 
         let isConnected = false;
         let selectedServer = null;
+        let tabSwitchTimer = null;
+        let viewSwitchTimer = null;
+        let keyboardTabSwitchTimer = null;
         let currentDeviceType = null;
         let canvas = null;
         let ctx = null;
@@ -358,7 +370,8 @@
             setupMouseEvents();
             const bottomPanel = document.getElementById('bottomPanel');
             if (bottomPanel) {
-                bottomPanel.style.display = 'none';
+                bottomPanel.classList.remove('is-open');
+                bottomPanel.setAttribute('aria-hidden', 'true');
             }
             const rightPanel = document.getElementById('rightPanel');
             if (rightPanel && !rightPanel.classList.contains('collapsed')) {
@@ -420,17 +433,53 @@
             window.addEventListener('pointerup', endHeaderDrag);
             window.addEventListener('resize', () => {
                 updateHeaderWidth();
+                updateTabIndicator(document.querySelector('.tab-btn.active'));
             });
             discoverServers();
             updateHeaderWidth();
+            updateTabIndicator(document.querySelector('.tab-btn.active'));
         });
 
-        function switchTab(tab) {
-            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
-            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+        function switchTab(tab, event) {
+            const activeButton = event && event.currentTarget ? event.currentTarget : document.querySelector(`.tab-btn[data-tab="${tab}"]`);
+            const targetTab = document.getElementById('tab-' + tab);
+            const currentTab = document.querySelector('.tab-content.active');
 
-            event.target.classList.add('active');
-            document.getElementById('tab-' + tab).classList.add('active');
+            if (!activeButton || !targetTab || targetTab === currentTab) {
+                updateTabIndicator(activeButton);
+                return;
+            }
+
+            clearTimeout(tabSwitchTimer);
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.toggle('active', btn === activeButton));
+            if (currentTab) {
+                currentTab.classList.remove('active');
+            }
+            updateTabIndicator(activeButton);
+
+            const allTabs = document.querySelectorAll('.tab-btn');
+            allTabs.forEach(btn => {
+                const selected = btn === activeButton;
+                btn.setAttribute('aria-selected', String(selected));
+                btn.tabIndex = selected ? 0 : -1;
+            });
+
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.setAttribute('aria-hidden', String(content !== targetTab));
+            });
+
+            tabSwitchTimer = setTimeout(() => {
+                targetTab.classList.add('active');
+            }, 120);
+        }
+
+        function updateTabIndicator(activeButton) {
+            const tabs = document.querySelector('.tabs');
+            const indicator = document.querySelector('.tab-indicator');
+            if (!tabs || !indicator || !activeButton) return;
+
+            indicator.style.width = `${activeButton.offsetWidth}px`;
+            indicator.style.transform = `translate3d(${activeButton.offsetLeft}px, 0, 0)`;
         }
 
         function discoverServers() {
@@ -754,16 +803,22 @@
         }
 
         function resetControlPanels() {
+            clearTimeout(keyboardTabSwitchTimer);
+            const bottomPanel = document.getElementById('bottomPanel');
+            if (bottomPanel) {
+                bottomPanel.classList.remove('is-open');
+                bottomPanel.setAttribute('aria-hidden', 'true');
+            }
             const tab = document.querySelector('.panel-toolbar button.active');
             if (tab) tab.classList.remove('active');
             const buttons = document.querySelectorAll('.panel-toolbar button');
             buttons.forEach(btn => btn.classList.remove('active'));
             const tabs = document.querySelectorAll('.panel-tab');
-            tabs.forEach(el => el.style.display = 'none');
+            tabs.forEach(el => el.classList.remove('active'));
             const defaultButton = document.querySelector('.panel-toolbar button[data-tab="mouse"]');
             const defaultTab = document.getElementById('panel-mouse');
             if (defaultButton) defaultButton.classList.add('active');
-            if (defaultTab) defaultTab.style.display = 'block';
+            if (defaultTab) defaultTab.classList.add('active');
         }
 
         function startWebRTCSession() {
@@ -1486,8 +1541,7 @@
 
         function showScreenView() {
             isConnected = true;
-            document.getElementById('view-connect').style.display = 'none';
-            document.getElementById('view-screen').style.display = 'block';
+            switchMainView('screen');
             canvas = document.getElementById('screen');
             if (canvas) {
                 canvas.style.display = 'block';
@@ -1520,10 +1574,34 @@
             retryServerId = null;
             retryServerType = null;
             hideConnectionOverlay();
-            document.getElementById('view-screen').style.display = 'none';
-            document.getElementById('view-connect').style.display = 'block';
+            switchMainView('connect');
             const statusDiv = document.getElementById('status');
             if (statusDiv) { statusDiv.className = 'status'; statusDiv.textContent = 'Disconnected'; }
+        }
+
+        function switchMainView(targetView) {
+            const connectView = document.getElementById('view-connect');
+            const screenView = document.getElementById('view-screen');
+            const incomingView = targetView === 'screen' ? screenView : connectView;
+            const outgoingView = targetView === 'screen' ? connectView : screenView;
+            if (!incomingView || !outgoingView || incomingView === outgoingView) return;
+
+            clearTimeout(viewSwitchTimer);
+            incomingView.style.display = 'block';
+            incomingView.classList.remove('view-leaving');
+            outgoingView.classList.remove('view-entering');
+            incomingView.classList.add('view-visible', 'view-entering');
+            outgoingView.classList.add('view-visible');
+
+            requestAnimationFrame(() => {
+                outgoingView.classList.add('view-leaving');
+                incomingView.classList.remove('view-entering');
+            });
+
+            viewSwitchTimer = setTimeout(() => {
+                outgoingView.style.display = 'none';
+                outgoingView.classList.remove('view-visible', 'view-leaving');
+            }, 320);
         }
 
         function toggleControls() {
@@ -1535,14 +1613,25 @@
         function toggleKeyboardPanel() {
             const panel = document.getElementById('bottomPanel');
             if (!panel) return;
-            panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
+            const isOpen = panel.classList.toggle('is-open');
+            panel.setAttribute('aria-hidden', String(!isOpen));
         }
 
         function showKeyboardPanelTab(tabName) {
             const buttons = document.querySelectorAll('.panel-toolbar button');
-            buttons.forEach(btn => btn.classList.toggle('active', btn.dataset.tab === tabName));
             const tabs = document.querySelectorAll('.panel-tab');
-            tabs.forEach(el => el.style.display = el.id === `panel-${tabName}` ? 'block' : 'none');
+            const targetTab = document.getElementById(`panel-${tabName}`);
+            const currentTab = document.querySelector('.panel-tab.active');
+            if (!targetTab || targetTab === currentTab) return;
+
+            clearTimeout(keyboardTabSwitchTimer);
+            buttons.forEach(btn => btn.classList.toggle('active', btn.dataset.tab === tabName));
+            if (currentTab) currentTab.classList.remove('active');
+            tabs.forEach(tab => tab.setAttribute('aria-hidden', String(tab !== targetTab)));
+
+            keyboardTabSwitchTimer = setTimeout(() => {
+                targetTab.classList.add('active');
+            }, 100);
         }
 
         function togglePanel(btn = null) {
