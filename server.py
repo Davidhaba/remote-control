@@ -13,7 +13,9 @@ import ctypes
 import uuid
 import hashlib
 import asyncio
+import queue
 import logging
+import subprocess
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 from ctypes import wintypes
@@ -21,11 +23,16 @@ import socketio
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCIceCandidate, RTCConfiguration, RTCIceServer
 from aiortc.sdp import candidate_from_sdp
 import aiortc.sdp as sdp_module
-from aiortc import VideoStreamTrack
+from aiortc import AudioStreamTrack, VideoStreamTrack
 import av
 import fractions
 import traceback
 import gzip
+import faulthandler
+try:
+    import pyaudiowpatch as pyaudio
+except Exception:
+    pyaudio = None
 try:
     import pyautogui
 except Exception:
@@ -245,11 +252,21 @@ pyautogui.PAUSE = 0
 FIXED_FRAME_WIDTH = 1280
 FIXED_FRAME_HEIGHT = 720
 
+QUALITY_PROFILES = {
+    'low': {'bitrate': 1_500_000, 'width': 960, 'height': 540},
+    'medium': {'bitrate': 4_000_000, 'width': 1280, 'height': 720},
+    'high': {'bitrate': 8_000_000, 'width': 1920, 'height': 1080},
+}
+
 try:
     import mss
     _MSS_AVAILABLE = True
 except Exception:
     _MSS_AVAILABLE = False
+
+_mss_instance = None
+_mss_monitor = None
+_mss_lock = threading.Lock()
 
 parser = argparse.ArgumentParser(description='Remote control server')
 parser.add_argument('--password', default=None, help='Optional password required for client authentication')
@@ -285,6 +302,16 @@ webrtc_loop_ready = None
 AUTH_TIMEOUT = 60 * 30
 tray_icon = None
 shutdown_event = threading.Event()
+
+faulthandler.enable()
+
+
+def _thread_exception_logger(args):
+    error(f'unhandled exception in thread {args.thread.name}: {args.exc_type.__name__}: {args.exc_value}')
+    traceback.print_exception(args.exc_type, args.exc_value, args.exc_traceback)
+
+
+threading.excepthook = _thread_exception_logger
 
 
 def connect_to_relay():
@@ -377,6 +404,48 @@ class ScreenVideoTrack(VideoStreamTrack):
             return await self.recv()
 
         try:
+            target_width = int(self.session.get('target_w') or FIXED_FRAME_WIDTH)
+            target_height = int(self.session.get('target_h') or FIXED_FRAME_HEIGHT)
+            if frame.shape[1] != target_width or frame.shape[0] != target_height:
+                scale = min(target_width / frame.shape[1], target_height / frame.shape[0])
+                resized_width = max(1, int(frame.shape[1] * scale))
+                resized_height = max(1, int(frame.shape[0] * scale))
+                frame = cv2.resize(frame, (resized_width, resized_height), interpolation=cv2.INTER_AREA)
+                if resized_width != target_width or resized_height != target_height:
+                    canvas = np.zeros((target_height, target_width, 3), dtype=frame.dtype)
+                    offset_x = (target_width - resized_width) // 2
+                    offset_y = (target_height - resized_height) // 2
+                    canvas[offset_y:offset_y + resized_height, offset_x:offset_x + resized_width] = frame
+                    frame = canvas
+
+            current_fps = max(1, int(self.session.get('fps') or self.fps))
+            self.interval = 1.0 / current_fps
+            channel = self.session.get('channel')
+            if channel is not None and getattr(channel, 'readyState', None) == 'open':
+                with cursor_lock:
+                    cursor_b64 = cursor_cache.get('b64')
+                    hotspot_x = cursor_cache.get('hx', 0)
+                    hotspot_y = cursor_cache.get('hy', 0)
+                    cursor_fmt = cursor_cache.get('fmt', 'png')
+                last_cursor = self.session.get('last_sent_cursor_b64')
+                if cursor_b64 is not None and cursor_b64 != last_cursor:
+                    try:
+                        channel.send(json.dumps({
+                            'type': 'cursor',
+                            'cursorImage': cursor_b64,
+                            'cursorHotspotX': hotspot_x,
+                            'cursorHotspotY': hotspot_y,
+                            'cursorFormat': cursor_fmt,
+                        }))
+                        self.session['last_sent_cursor_b64'] = cursor_b64
+                    except Exception as exc:
+                        dbg(f'cursor update failed: {exc}')
+                elif cursor_b64 is None and last_cursor is not None:
+                    try:
+                        channel.send(json.dumps({'type': 'cursor', 'cursorRemoved': True}))
+                        self.session['last_sent_cursor_b64'] = None
+                    except Exception as exc:
+                        dbg(f'cursor removal update failed: {exc}')
             try:
                 video_frame = av.VideoFrame.from_ndarray(frame, format='bgr24')
             except Exception:
@@ -413,6 +482,96 @@ class ScreenVideoTrack(VideoStreamTrack):
             super().stop()
         except Exception:
             pass
+
+
+class SystemAudioTrack(AudioStreamTrack):
+
+    def __init__(self):
+        super().__init__()
+        if pyaudio is None:
+            raise RuntimeError('pyaudiowpatch is not installed')
+        self._audio = pyaudio.PyAudio()
+        device = self._audio.get_default_wasapi_loopback()
+        self.rate = int(device.get('defaultSampleRate') or 48000)
+        self.channels = min(2, int(device.get('maxInputChannels') or 2))
+        if self.channels < 1:
+            raise RuntimeError('WASAPI loopback device has no input channels')
+        self.samples = 960
+        self._stopped = False
+        self._audio_queue = queue.Queue(maxsize=3)
+        self._stream = self._audio.open(
+            format=pyaudio.paInt16,
+            channels=self.channels,
+            rate=self.rate,
+            input=True,
+            input_device_index=device['index'],
+            frames_per_buffer=self.samples,
+        )
+        self._stream.start_stream()
+        self._capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
+        self._capture_thread.start()
+        self._pts = 0
+
+    def _capture_loop(self):
+        while not self._stopped:
+            try:
+                raw = self._stream.read(self.samples, exception_on_overflow=False)
+                try:
+                    self._audio_queue.put_nowait(raw)
+                except queue.Full:
+                    self._audio_queue.get_nowait()
+                    self._audio_queue.put_nowait(raw)
+            except Exception:
+                if not self._stopped:
+                    time.sleep(0.01)
+
+    async def recv(self):
+        if self._stopped:
+            raise Exception('track stopped')
+        raw = await asyncio.to_thread(self._audio_queue.get)
+        if raw is None or self._stopped:
+            raise Exception('track stopped')
+        frame = av.AudioFrame(
+            format='s16',
+            layout='stereo' if self.channels == 2 else 'mono',
+            samples=self.samples,
+        )
+        frame.planes[0].update(raw)
+        frame.pts = self._pts
+        frame.sample_rate = self.rate
+        frame.time_base = fractions.Fraction(1, self.rate)
+        self._pts += self.samples
+        return frame
+
+    def stop(self):
+        if self._stopped:
+            return
+        self._stopped = True
+        try:
+            self._audio_queue.put_nowait(None)
+        except queue.Full:
+            try:
+                self._audio_queue.get_nowait()
+                self._audio_queue.put_nowait(None)
+            except queue.Empty:
+                pass
+        try:
+            self._stream.stop_stream()
+        except Exception:
+            pass
+        capture_thread = getattr(self, '_capture_thread', None)
+        if capture_thread is not None and capture_thread.is_alive():
+            capture_thread.join(timeout=2.0)
+        if capture_thread is not None and capture_thread.is_alive():
+            error('audio capture thread did not stop; leaving PortAudio stream open')
+            super().stop()
+            return
+        try:
+            self._stream.close()
+            self._audio.terminate()
+        except Exception:
+            pass
+        super().stop()
 
 
 @relay_socket.on('request_session')
@@ -467,6 +626,12 @@ async def _async_cleanup_webrtc_session(browser_sid, remove_session=True):
                 pass
     except Exception:
         pass
+    try:
+        audio_track = session.get('audio_track') if session else None
+        if audio_track is not None:
+            audio_track.stop()
+    except Exception:
+        pass
 
     with webrtc_sessions_lock:
         session = webrtc_sessions.get(browser_sid)
@@ -476,6 +641,42 @@ async def _async_cleanup_webrtc_session(browser_sid, remove_session=True):
             session['pc'] = None
             if remove_session:
                 webrtc_sessions.pop(browser_sid, None)
+
+
+async def _apply_video_bitrate(session, bitrate):
+    pc = session.get('pc') if session else None
+    if pc is None:
+        return
+    for sender in pc.getSenders():
+        track = getattr(sender, 'track', None)
+        if track is None or getattr(track, 'kind', None) != 'video':
+            continue
+        try:
+            params = sender.getParameters()
+            if not params.encodings:
+                params.encodings = [{}]
+            params.encodings[0]['maxBitrate'] = int(bitrate)
+            await sender.setParameters(params)
+        except Exception as exc:
+            dbg(f'video bitrate update skipped: {exc}')
+
+
+async def _apply_video_fps(session, fps):
+    pc = session.get('pc') if session else None
+    if pc is None:
+        return
+    for sender in pc.getSenders():
+        track = getattr(sender, 'track', None)
+        if track is None or getattr(track, 'kind', None) != 'video':
+            continue
+        try:
+            params = sender.getParameters()
+            if not params.encodings:
+                params.encodings = [{}]
+            params.encodings[0]['maxFramerate'] = int(fps)
+            await sender.setParameters(params)
+        except Exception as exc:
+            dbg(f'video FPS update skipped: {exc}')
 
 
 async def _async_shutdown_webrtc_resources(session_ids):
@@ -539,52 +740,47 @@ def _shutdown_webrtc_resources():
 
 def _cleanup_webrtc_session(browser_sid, remove_session=True):
     with webrtc_sessions_lock:
-        session = webrtc_sessions.get(browser_sid)
+        session = webrtc_sessions.pop(browser_sid, None) if remove_session else webrtc_sessions.get(browser_sid)
         if not session:
             return
 
         session['open'] = False
         task = session.get('frame_task')
         loop = session.get('loop')
-        if task is not None:
-            try:
-                if loop is not None and loop_running(loop) and hasattr(loop, 'call_soon_threadsafe'):
-                    loop.call_soon_threadsafe(task.cancel)
-                elif hasattr(task, 'cancel'):
-                    task.cancel()
-            except Exception:
-                pass
-
         pc = session.get('pc')
-        if pc is not None and loop_running(loop):
-            try:
-                asyncio.run_coroutine_threadsafe(pc.close(), loop)
-            except Exception as exc:
-                error(f'error scheduling pc.close() for browser_sid={browser_sid}: {exc}')
-        else:
-            channel = session.get('channel')
-            if channel is not None:
-                try:
-                    if getattr(channel, 'readyState', None) != 'closed':
-                        channel.close()
-                except Exception:
-                    pass
-        try:
-            video_track = session.get('video_track') if session else None
-            if video_track is not None:
-                try:
-                    video_track.stop()
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
+        channel = session.get('channel')
+        video_track = session.get('video_track')
+        audio_track = session.get('audio_track')
         session['frame_task'] = None
         session['channel'] = None
         session['pc'] = None
 
-        if remove_session:
-            webrtc_sessions.pop(browser_sid, None)
+    if task is not None:
+        try:
+            if loop is not None and loop_running(loop) and hasattr(loop, 'call_soon_threadsafe'):
+                loop.call_soon_threadsafe(task.cancel)
+            elif hasattr(task, 'cancel'):
+                task.cancel()
+        except Exception:
+            pass
+
+    if pc is not None and loop_running(loop):
+        try:
+            asyncio.run_coroutine_threadsafe(pc.close(), loop)
+        except Exception as exc:
+            error(f'error scheduling pc.close() for browser_sid={browser_sid}: {exc}')
+    elif channel is not None:
+        try:
+            if getattr(channel, 'readyState', None) != 'closed':
+                channel.close()
+        except Exception:
+            pass
+    for track in (video_track, audio_track):
+        if track is not None:
+            try:
+                track.stop()
+            except Exception:
+                pass
 
 
 @relay_socket.on('end_session')
@@ -611,15 +807,13 @@ def on_relay_connect():
         return
     relay_connected = True
     info('relay socket connected')
-    dbg(f'relay connected, direct_host={get_local_ip()} direct_port={port}')
+    dbg('relay connected via Socket.IO; media and control use WebRTC')
     try:
         relay_socket.emit('register_server', {
             'server_id': args.server_id,
             'name': socket.gethostname(),
             'hostname': socket.gethostname(),
             'address': args.server_id,
-            'direct_host': get_local_ip(),
-            'direct_port': port,
         })
     except Exception as exc:
         error(f're-register server failed after reconnect: {exc}')
@@ -692,7 +886,7 @@ def on_webrtc_offer(data):
     data = data or {}
     browser_sid = data.get('browser_sid')
     offer = data.get('offer')
-    info(f'received webrtc_offer browser_sid={browser_sid} offer_present={bool(offer)}')
+    dbg(f'received webrtc_offer browser_sid={browser_sid} offer_present={bool(offer)}')
     dbg(f'offer payload keys={list(offer.keys()) if isinstance(offer, dict) else type(offer)}')
     if not browser_sid or not offer:
         info('[server] invalid offer payload or missing browser_sid')
@@ -742,8 +936,11 @@ def on_webrtc_candidate(data):
                 'candidate_queue': [candidate],
                 'loop': None,
                 'remote_description_set': False,
-                'quality': 0,
-                'throttle_ms': 0,
+                'quality_profile': 'medium',
+                'bitrate': QUALITY_PROFILES['medium']['bitrate'],
+                'fps': 30,
+                'target_w': FIXED_FRAME_WIDTH,
+                'target_h': FIXED_FRAME_HEIGHT,
             }
             return
 
@@ -835,39 +1032,11 @@ def _run_webrtc_offer(browser_sid, offer):
             dbg(f'datachannel protocol={channel.protocol} negotiated={channel.negotiated} readyState={channel.readyState}')
             session['channel'] = channel
 
-            def start_frame_sender():
-                if session.get('frame_task') is not None:
-                    try:
-                        done = session['frame_task'].done()
-                    except Exception:
-                        done = True
-                    if not done:
-                        return
-                if channel.readyState != 'open':
-                    dbg(f'datachannel not open yet for browser_sid={browser_sid} readyState={channel.readyState}')
-                    return
-                session['open'] = True
-                info(f'datachannel open for control messages browser_sid={browser_sid}')
-                try:
-                    coro = _send_webrtc_frames(browser_sid)
-                    if loop_running(session.get('loop')):
-                        session['frame_task'] = asyncio.run_coroutine_threadsafe(coro, session['loop'])
-                    else:
-                        try:
-                            loop = asyncio.get_event_loop()
-                            if loop is session['loop']:
-                                session['frame_task'] = asyncio.ensure_future(coro)
-                            else:
-                                dbg(f'not scheduling frame sender; session loop mismatch for browser_sid={browser_sid}')
-                        except RuntimeError:
-                            dbg(f'no running loop to schedule frame sender for browser_sid={browser_sid}')
-                except Exception as exc:
-                    dbg(f'failed to schedule frame sender: {exc}')
-
             @channel.on("open")
             def on_open():
                 info(f'datachannel open event for browser_sid={browser_sid}')
-                start_frame_sender()
+                session['open'] = True
+                info(f'datachannel ready for control messages browser_sid={browser_sid}')
 
 
             @channel.on("message")
@@ -888,10 +1057,14 @@ def _run_webrtc_offer(browser_sid, offer):
             @channel.on("close")
             def on_close():
                 info(f'datachannel closed for browser_sid={browser_sid}')
-                _cleanup_webrtc_session(browser_sid)
+                threading.Thread(
+                    target=lambda: _cleanup_webrtc_session(browser_sid),
+                    name=f'cleanup-{browser_sid[:8]}',
+                    daemon=True,
+                ).start()
 
             if channel.readyState == 'open':
-                start_frame_sender()
+                session['open'] = True
 
         @pc.on("icecandidate")
         def on_icecandidate(event):
@@ -906,7 +1079,8 @@ def _run_webrtc_offer(browser_sid, offer):
                 except Exception as exc:
                     error(f'emit candidate failed {exc}')
         try:
-            vdbg(f'offer sdp snippet for browser_sid={browser_sid}: {offer.get("sdp", "")[:2000].replace("\n", "\\n") if isinstance(offer, dict) else str(type(offer))}')
+            offer_sdp = offer.get('sdp', '')[:2000].replace('\n', '\\n') if isinstance(offer, dict) else str(type(offer))
+            vdbg(f'offer sdp snippet for browser_sid={browser_sid}: {offer_sdp}')
         except Exception:
             pass
 
@@ -935,12 +1109,19 @@ def _run_webrtc_offer(browser_sid, offer):
         try:
             video_track = ScreenVideoTrack(capture_screen_dxgi, session)
             try:
-                transceiver = pc.addTransceiver('video', direction='sendonly')
+                transceiver = next(
+                    (item for item in pc.getTransceivers() if item.kind == 'video'),
+                    None,
+                )
+                if transceiver is None:
+                    transceiver = pc.addTransceiver('video', direction='sendonly')
+                else:
+                    transceiver.direction = 'sendonly'
                 sender = transceiver.sender
                 res = sender.replaceTrack(video_track)
                 if asyncio.iscoroutine(res):
                     await res
-                dbg(f'added video transceiver and replaced track for browser_sid={browser_sid}')
+                dbg(f'configured RTP video transceiver and replaced track for browser_sid={browser_sid}')
                 try:
                     senders = pc.getSenders()
                     dbg(f'senders count={len(senders)} for browser_sid={browser_sid}')
@@ -964,9 +1145,27 @@ def _run_webrtc_offer(browser_sid, offer):
                 session = webrtc_sessions.get(browser_sid)
                 if session is not None:
                     session['video_track'] = video_track
+            try:
+                audio_track = SystemAudioTrack()
+                transceiver = next(
+                    (item for item in pc.getTransceivers() if item.kind == 'audio'),
+                    None,
+                )
+                if transceiver is None:
+                    transceiver = pc.addTransceiver('audio', direction='sendonly')
+                else:
+                    transceiver.direction = 'sendonly'
+                res = transceiver.sender.replaceTrack(audio_track)
+                if asyncio.iscoroutine(res):
+                    await res
+                with webrtc_sessions_lock:
+                    session['audio_track'] = audio_track
+                dbg(f'configured WASAPI loopback audio for browser_sid={browser_sid}')
+            except Exception as exc:
+                dbg(f'Audio capture unavailable for browser_sid={browser_sid}: {exc}')
         except Exception as exc:
             error(f'failed to add video track for browser_sid={browser_sid}: {exc}\n{traceback.format_exc()}')
-        info(f'remote description set for browser_sid={browser_sid}')
+        dbg(f'remote description set for browser_sid={browser_sid}')
         dbg(f'peer connection state after remote description: {pc.connectionState} iceConnectionState={pc.iceConnectionState}')
         answer = await pc.createAnswer()
         try:
@@ -1046,11 +1245,12 @@ def _run_webrtc_offer(browser_sid, offer):
                     pass
         except Exception:
             pass
-        info(f'local description set for browser_sid={browser_sid}')
+        dbg(f'local description set for browser_sid={browser_sid}')
         dbg(f'created answer for browser_sid={browser_sid} sdp_length={len(pc.localDescription.sdp) if pc.localDescription else 0}')
         try:
             if VERBOSE:
-                dbg(f'answer sdp snippet for browser_sid={browser_sid}: {pc.localDescription.sdp[:2000].replace("\n", "\\n") if pc.localDescription else ""}')
+                answer_sdp = pc.localDescription.sdp[:2000].replace('\n', '\\n') if pc.localDescription else ''
+                dbg(f'answer sdp snippet for browser_sid={browser_sid}: {answer_sdp}')
         except Exception:
             pass
         relay_socket.emit('webrtc_answer', {
@@ -1091,8 +1291,11 @@ def _run_webrtc_offer(browser_sid, offer):
                 'candidate_queue': [],
                 'loop': webrtc_loop,
                 'remote_description_set': False,
-                'quality': 0,
-                'throttle_ms': 0,
+                'quality_profile': 'medium',
+                'bitrate': QUALITY_PROFILES['medium']['bitrate'],
+                'fps': 30,
+                'target_w': FIXED_FRAME_WIDTH,
+                'target_h': FIXED_FRAME_HEIGHT,
             }
             webrtc_sessions[browser_sid] = session
         else:
@@ -1440,15 +1643,16 @@ else:
 
 
 def capture_screen_dxgi():
+    global _mss_instance, _mss_monitor
     if _MSS_AVAILABLE:
         try:
-            with mss.mss() as s:
-                monitor = s.monitors[1] if len(s.monitors) > 1 else s.monitors[0]
-                img = s.grab(monitor)
-                frame = np.array(img)
-                if frame.shape[2] == 4:
-                    frame = frame[..., :3]
-                return frame
+            with _mss_lock:
+                if _mss_instance is None:
+                    _mss_instance = mss.MSS()
+                    _mss_monitor = _mss_instance.monitors[1] if len(_mss_instance.monitors) > 1 else _mss_instance.monitors[0]
+                img = _mss_instance.grab(_mss_monitor)
+                frame = np.asarray(img)
+                return frame[..., :3] if frame.shape[2] == 4 else frame
         except Exception:
             pass
 
@@ -1934,40 +2138,37 @@ def execute_command(cmd_data, browser_sid=None, ws_settings=None):
             pyautogui.write(text, interval=0)
         except Exception:
             pass
-    elif cmd_type == "set_quality":
-        try:
-            settings = None
-            if browser_sid:
-                with webrtc_sessions_lock:
-                    settings = webrtc_sessions.get(browser_sid)
-            if settings is None:
-                settings = ws_settings
-            mode = cmd_data.get('mode')
-            q = cmd_data.get('quality')
-            if settings is not None:
-                try:
-                    settings['quality'] = int(q or 0)
-                except Exception:
-                    settings['quality'] = 0
-        except Exception:
-            pass
-    elif cmd_type == "set_throttle":
-        try:
-            settings = None
-            if browser_sid:
-                with webrtc_sessions_lock:
-                    settings = webrtc_sessions.get(browser_sid)
-            if settings is None:
-                settings = ws_settings
-            mode = cmd_data.get('mode')
-            interval = cmd_data.get('interval_ms')
-            if settings is not None:
-                try:
-                    settings['throttle_ms'] = int(interval or 0)
-                except Exception:
-                    settings['throttle_ms'] = 0
-        except Exception:
-            pass
+    elif cmd_type in ('set_quality_profile', 'set_stream_setting'):
+        settings = None
+        if browser_sid:
+            with webrtc_sessions_lock:
+                settings = webrtc_sessions.get(browser_sid)
+        if settings is None:
+            settings = ws_settings
+        if settings is None:
+            return
+
+        if cmd_type == 'set_quality_profile':
+            profile_name = cmd_data.get('profile', 'medium')
+            profile = QUALITY_PROFILES.get(profile_name, QUALITY_PROFILES['medium'])
+            settings['quality_profile'] = profile_name if profile_name in QUALITY_PROFILES else 'medium'
+            settings['bitrate'] = profile['bitrate']
+            settings['target_w'] = profile['width']
+            settings['target_h'] = profile['height']
+            if browser_sid and settings.get('loop') and loop_running(settings['loop']):
+                asyncio.run_coroutine_threadsafe(
+                    _apply_video_bitrate(settings, profile['bitrate']),
+                    settings['loop'],
+                )
+        else:
+            setting = cmd_data.get('setting')
+            if setting == 'fps':
+                settings['fps'] = max(1, min(60, int(cmd_data.get('value', 30))))
+                if browser_sid and settings.get('loop') and loop_running(settings['loop']):
+                    asyncio.run_coroutine_threadsafe(
+                        _apply_video_fps(settings, settings['fps']),
+                        settings['loop'],
+                    )
 
 def tcp_server():
     global port
@@ -2026,15 +2227,9 @@ def get_local_ip():
         s.close()
     return local_ip
 
-port = 1
-port_ready = threading.Event()
 cursor_thread = threading.Thread(target=capture_cursor_worker, daemon=True)
-tcp_thread = threading.Thread(target=tcp_server, daemon=True)
-udp_thread = threading.Thread(target=udp_broadcast_listener, daemon=True)
+port_ready = threading.Event()
 cursor_thread.start()
-tcp_thread.start()
-port_ready.wait()
-udp_thread.start()
 threading.Thread(target=relay_reconnect_loop, daemon=True).start()
 
 def open_logs_folder():
@@ -2064,6 +2259,7 @@ if os.name == 'nt':
         def _console_ctrl_handler(ctrl_type):
             try:
                 if ctrl_type in (0, 1, 2, 5, 6):
+                    dbg(f'Windows console control event received: {ctrl_type}')
                     if not shutdown_event.is_set():
                         info('shutting down')
                     shutdown_event.set()

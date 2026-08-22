@@ -3,10 +3,6 @@ import signal
 import socket
 import threading
 import time
-import subprocess
-import shutil
-import json
-import sys
 
 ASYNC_MODE = 'threading'
 GEVENT_WEBSOCKET_AVAILABLE = False
@@ -109,7 +105,7 @@ def connect():
         'server_id': server_id,
         'socket_id': socket_id,
         'password': password.strip(),
-        'type': data.get('type', 'desktop'),
+        'type': 'desktop',
         'created_at': time.time(),
     }
 
@@ -117,7 +113,7 @@ def connect():
         'browser_sid': socket_id,
         'server_id': server_id,
         'password': password,
-        'type': data.get('type', 'desktop'),
+        'type': 'desktop',
     }, room=server['sid'])
 
     response = {'status': 'connected'}
@@ -138,40 +134,6 @@ def api_disconnect():
         if server and server.get('sid'):
             socketio.emit('end_session', {'browser_sid': socket_id, 'server_id': server_id}, room=server['sid'])
     return jsonify({'status': 'disconnected'})
-
-
-@app.route('/api/discover-android', methods=['GET'])
-def discover_android():
-    try:
-        adb = shutil.which('adb')
-        if not adb:
-            return jsonify({'devices': []})
-        result = subprocess.run([adb, 'devices', '-l'], capture_output=True, text=True, timeout=10)
-        if result.returncode != 0:
-            return jsonify({'devices': []})
-        devices = []
-        for line in result.stdout.splitlines()[1:]:
-            parts = line.split()
-            if not parts or parts[0].startswith('List'):
-                continue
-            device_id = parts[0]
-            if device_id.endswith('device'):
-                device_id = device_id[:-len('device')]
-            if device_id:
-                props = {}
-                for part in parts[1:]:
-                    if ':' in part:
-                        k, v = part.split(':', 1)
-                        props[k] = v
-                devices.append({
-                    'id': device_id,
-                    'manufacturer': props.get('manufacturer', 'Unknown'),
-                    'model': props.get('model', 'Unknown'),
-                    'android_version': props.get('ro.build.version.release', 'Unknown'),
-                })
-        return jsonify({'devices': devices})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
 
 
 @socketio.on('connect')

@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Remote Control</title>
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
@@ -31,15 +31,15 @@
                     <span>Connect to</span>
                     <em>your devices.</em>
                 </h1>
-                <p>Choose a computer or mobile device to start a secure session.</p>
+                <p>Choose a computer to start a secure session from any browser.</p>
                 <div class="aside-footer"><span class="footer-line"></span><span>Private session</span></div>
             </aside>
 
             <section class="card sidebar connect-card">
-                <div class="tabs" role="tablist" aria-label="Device type">
+                <div class="tabs" role="tablist" aria-label="Computer list">
                     <span class="tab-indicator" aria-hidden="true"></span>
                     <button type="button" role="tab" id="desktop-tab" class="tab-btn active" data-tab="desktop" aria-controls="tab-desktop" aria-selected="true" onclick="switchTab('desktop', event)"><i class="fa fa-desktop"></i> Desktop</button>
-                    <button type="button" role="tab" id="mobile-tab" class="tab-btn" data-tab="mobile" aria-controls="tab-mobile" aria-selected="false" onclick="switchTab('mobile', event)"><i class="fa fa-mobile"></i> Mobile</button>
+                    <button type="button" role="tab" id="recent-tab" class="tab-btn" data-tab="recent" aria-controls="tab-recent" aria-selected="false" onclick="switchTab('recent', event)"><i class="fa fa-history"></i> Recent</button>
                 </div>
 
                 <div class="tab-stage">
@@ -68,29 +68,29 @@
                     <p class="info-text subdued">Only machines currently visible to the relay are shown.</p>
                     </div>
 
-                    <div id="tab-mobile" class="tab-content" role="tabpanel" aria-labelledby="mobile-tab" aria-hidden="true">
+                    <div id="tab-recent" class="tab-content" role="tabpanel" aria-labelledby="recent-tab" aria-hidden="true">
                     <div class="card-header">
                         <div>
-                            <div class="section-kicker">ANDROID DEVICES</div>
-                            <div class="card-title">Connected devices</div>
-                            <div class="card-subtitle">Find phones and tablets with ADB enabled.</div>
+                            <div class="section-kicker">RECENT CONNECTIONS</div>
+                            <div class="card-title">Your computers</div>
+                            <div class="card-subtitle">Reconnect to a computer you used recently.</div>
                         </div>
-                        <div class="card-pill">ADB</div>
+                        <div class="card-pill">HISTORY</div>
                     </div>
 
                     <div class="controls">
-                        <button class="btn btn-primary" onclick="discoverAndroidDevices()"><i class="fa fa-refresh"></i> Scan for devices</button>
+                        <button class="btn btn-primary" onclick="renderRecentServers()"><i class="fa fa-refresh"></i> Refresh history</button>
                     </div>
 
                     <div class="search">
                         <i class="fa fa-search search-icon"></i>
-                        <input id="deviceSearch" placeholder="Search devices" oninput="filterAndroidDevices()">
+                        <input id="recentSearch" placeholder="Search computers" oninput="filterRecentServers()">
                         <button class="btn btn-ghost clear-search" aria-label="Clear search"
-                            onclick="document.getElementById('deviceSearch').value='';filterAndroidDevices();">&times;</button>
+                            onclick="document.getElementById('recentSearch').value='';filterRecentServers();">&times;</button>
                     </div>
 
-                    <div id="deviceList" class="server-list"></div>
-                    <p class="info-text subdued">Connect an Android device with USB debugging enabled.</p>
+                    <div id="recentList" class="server-list"></div>
+                    <p class="info-text subdued">Computers remain here after they go offline.</p>
                     </div>
                 </div>
 
@@ -148,25 +148,34 @@
             </div>
 
             <div class="control-section" id="qualitySection">
-                <div class="control-title"><i class="fa fa-image"></i> Quality</div>
-                <input type="range" id="qualitySlider" class="quality-slider" min="0" max="95" value="0" step="5"
-                    oninput="onQualitySliderChange(event)">
-                <div class="quality-meta">
-                    <span>Auto</span><span id="qualityValue">Auto</span><span>95</span>
+                <div class="control-title"><i class="fa fa-image"></i> Quality profile</div>
+                <div class="setting-options" role="group" aria-label="Quality profile">
+                    <button class="setting-option" data-quality="low" onclick="setQualityProfile('low')">Low</button>
+                    <button class="setting-option active" data-quality="medium" onclick="setQualityProfile('medium')">Medium</button>
+                    <button class="setting-option" data-quality="high" onclick="setQualityProfile('high')">High</button>
                 </div>
             </div>
 
-            <div class="control-section" id="throttleSection">
-                <div class="control-title"><i class="fa fa-tachometer"></i> Throttle</div>
-                <input type="range" id="throttleSlider" class="quality-slider" min="0" max="200" value="0" step="10"
-                    oninput="onThrottleSliderChange(event)">
-                <div class="quality-meta">
-                    <span>Auto</span><span id="throttleValue">Auto</span><span>200 ms</span>
-                </div>
+            <div class="control-section">
+                <div class="control-title"><i class="fa fa-film"></i> Frame rate</div>
+                <select id="fpsSelect" class="setting-select" onchange="setStreamSetting('fps', Number(this.value))">
+                    <option value="24">24 FPS</option>
+                    <option value="30" selected>30 FPS</option>
+                    <option value="60">60 FPS</option>
+                </select>
             </div>
+
         </div>
 
         <div class="bottom-panel" id="bottomPanel" aria-hidden="true">
+            <div class="mobile-control-mode" id="mobileControlMode" hidden>
+                <div class="control-title"><i class="fa fa-hand-o-up"></i> Touch input</div>
+                <div class="mode-switch" role="group" aria-label="Touch input mode">
+                    <button type="button" class="mode-option active" data-mode="touchpad" onclick="setTouchInputMode('touchpad')"><i class="fa fa-arrows"></i><span>Touchpad</span></button>
+                    <button type="button" class="mode-option" data-mode="touch" onclick="setTouchInputMode('touch')"><i class="fa fa-hand-o-up"></i><span>Touch control</span></button>
+                </div>
+                <div class="mode-description" id="touchModeDescription">Tap and swipe directly on the remote screen.</div>
+            </div>
             <div class="panel-toolbar">
                 <button class="btn btn-ghost active" data-tab="mouse"
                     onclick="showKeyboardPanelTab('mouse')">Mouse</button>
@@ -219,9 +228,12 @@
         </div>
 
         <div class="screen-area">
-            <canvas id="screen"></canvas>
-            <img id="remoteCursorImg" alt="cursor" />
-            <div id="remoteCursorCircle"></div>
+            <div id="screenContent">
+                <video id="remoteVideo" autoplay playsinline></video>
+                <canvas id="screen"></canvas>
+                <img id="remoteCursorImg" alt="cursor" />
+                <div id="remoteCursorCircle"></div>
+            </div>
         </div>
     </div>
 
@@ -285,6 +297,9 @@
     </div>
 
     <script>
+        document.addEventListener('gesturestart', event => event.preventDefault(), { passive: false });
+        document.addEventListener('gesturechange', event => event.preventDefault(), { passive: false });
+        document.addEventListener('gestureend', event => event.preventDefault(), { passive: false });
         const socket = io();
         socket.on('connect_error', (err) => {
             console.error('Socket connect error', err);
@@ -301,6 +316,7 @@
         let webrtcPeer = null;
         let webrtcChannel = null;
         let webrtcReady = false;
+        let remoteMediaStream = null;
         let pendingRemoteCandidates = [];
         let remoteDescriptionSet = false;
 
@@ -311,21 +327,34 @@
         let mouseSetupDone = false;
         const TAP_MAX_MS = 250;
         const TAP_MOVE_THRESHOLD = 10;
+        const TOUCHPAD_DRAG_THRESHOLD = 4;
+        const TOUCHPAD_SENSITIVITY = 1.6;
         let touchStartTime = 0;
         let touchMoved = false;
 
         const __serverItems = [];
-        const __androidDevices = [];
+        const __recentItems = [];
 
         let remoteCursorImg = null;
         let cursorHotspotX = 0, cursorHotspotY = 0;
         let cursorImageAvailable = false;
+        const isMobileBrowser = detectMobileBrowser();
         let cursorScale = 1.0;
         let retryPassword = '';
         let retryServerId = null;
         let retryServerType = null;
         let suppressConnectionOverlay = false;
         let retryInProgress = false;
+        let touchInputMode = 'touchpad';
+        let touchGesture = null;
+        let touchpadHold = null;
+        let screenZoom = 1;
+        let screenOffsetX = 0;
+        let screenOffsetY = 0;
+        let pinchGesture = null;
+        let ignoreMouseUntil = 0;
+        const STREAM_SETTINGS_STORAGE_KEY = 'remoteControl.streamSettings';
+        const QUALITY_PROFILES = ['low', 'medium', 'high'];
 
         const headerDragState = {
             active: false,
@@ -334,6 +363,19 @@
             trackWidth: 0,
             maxScroll: 0
         };
+
+        function detectMobileBrowser() {
+            const userAgentData = navigator.userAgentData;
+            const userAgent = navigator.userAgent || '';
+            const mobileUserAgent = /Android|webOS|iPhone|iPod|BlackBerry|IEMobile|Opera Mini|Mobile/i.test(userAgent);
+            const isIPadOSDesktopMode = navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
+            const mobileUserAgentData = userAgentData && userAgentData.mobile === true;
+            return mobileUserAgentData || mobileUserAgent || isIPadOSDesktopMode;
+        }
+
+        function isMobileTouchSession() {
+            return isMobileBrowser && Boolean(currentDeviceType);
+        }
 
         function updateHeaderScrollbar() {
             const headerEl = document.getElementById('headerEl');
@@ -408,6 +450,8 @@
         }
 
         window.addEventListener('load', () => {
+            document.body.dataset.browserMobile = String(isMobileBrowser);
+            setTouchInputMode(getStoredTouchInputMode());
             canvas = document.getElementById('screen');
             if (canvas) {
                 ctx = canvas.getContext('2d');
@@ -516,6 +560,7 @@
 
             tabSwitchTimer = setTimeout(() => {
                 targetTab.classList.add('active');
+                if (tab === 'recent') renderRecentServers();
             }, 120);
         }
 
@@ -563,55 +608,47 @@
                 });
         }
 
-        function discoverAndroidDevices() {
-            const statusDiv = document.getElementById('status');
-            statusDiv.className = 'status loading';
-            statusDiv.textContent = 'Searching...';
+        function getRecentServers() {
+            try {
+                return JSON.parse(localStorage.getItem('remoteControl.recentServers') || '[]');
+            } catch (error) {
+                console.warn('Recent computer history is invalid:', error);
+                return [];
+            }
+        }
 
-            fetch('/api/discover-android', { method: 'GET' })
-                .then(res => {
-                    if (!res.ok || res.status === 404) {
-                        throw new Error('Failed to discover Android devices');
-                    }
-                    if (res.headers.get('Content-Type') !== 'application/json') {
-                        throw new Error('Invalid response from server');
-                    }
-                    return res.json();
-                })
-                .then(data => {
-                    if (!data) {
-                        throw new Error('Invalid response from server');
-                    }
-                    const deviceList = document.getElementById('deviceList');
-                    deviceList.innerHTML = '';
-                    __androidDevices.length = 0;
-                    if (!data.devices || data.devices.length === 0) {
-                        deviceList.innerHTML = '<p class="muted-text">No devices found</p>';
-                        statusDiv.className = 'status';
-                        statusDiv.textContent = 'No devices';
-                        return;
-                    }
-                    data.devices.forEach(device => {
-                        const item = document.createElement('div');
-                        item.className = 'server-item';
-                        item.innerHTML = `
-                            <span>${device.manufacturer} ${device.model}</span><br>
-                            <span class="muted-text small">${device.android_version}</span><br>
-                            <span class="muted-text xsmall">${device.id}</span>
-                        `;
-                        item.onclick = () => connectToAndroid(device.id, item);
-                        deviceList.appendChild(item);
-                        __androidDevices.push({ element: item, text: (device.manufacturer + ' ' + device.model + ' ' + device.id).toLowerCase() });
-                    });
-                    statusDiv.className = 'status';
-                    statusDiv.textContent = 'Devices found';
-                })
-                .catch(err => {
-                    const statusDiv = document.getElementById('status');
-                    statusDiv.className = 'status';
-                    statusDiv.textContent = 'Search failed';
-                    console.error('Android discovery error:', err);
-                });
+        function saveRecentServer(address, password, label) {
+            const recent = getRecentServers().filter(server => server.address !== address);
+            recent.unshift({ address, password, label: label || address, lastConnected: Date.now() });
+            localStorage.setItem('remoteControl.recentServers', JSON.stringify(recent.slice(0, 20)));
+        }
+
+        function renderRecentServers() {
+            const recentList = document.getElementById('recentList');
+            if (!recentList) return;
+            recentList.innerHTML = '';
+            __recentItems.length = 0;
+            const recent = getRecentServers();
+            if (!recent.length) {
+                recentList.innerHTML = '<p class="muted-text">No recent computers</p>';
+                return;
+            }
+            recent.forEach(server => {
+                const item = document.createElement('div');
+                item.className = 'server-item';
+                item.innerHTML = `<span>${server.label}</span><br><span class="muted-text small">${server.address}</span>`;
+                item.onclick = () => connectWithStoredPassword(server, item);
+                recentList.appendChild(item);
+                __recentItems.push({ element: item, text: `${server.label} ${server.address}`.toLowerCase() });
+            });
+        }
+
+        function connectWithStoredPassword(server, element) {
+            document.querySelectorAll('.server-item').forEach(el => el.classList.remove('selected'));
+            element.classList.add('selected');
+            selectedServer = server.address;
+            currentDeviceType = 'desktop';
+            connectToSelectedServer(server.password);
         }
 
         function filterServers() {
@@ -621,9 +658,9 @@
             });
         }
 
-        function filterAndroidDevices() {
-            const q = document.getElementById('deviceSearch').value.trim().toLowerCase();
-            __androidDevices.forEach(it => {
+        function filterRecentServers() {
+            const q = document.getElementById('recentSearch').value.trim().toLowerCase();
+            __recentItems.forEach(it => {
                 it.element.style.display = it.text.includes(q) ? '' : 'none';
             });
         }
@@ -693,12 +730,19 @@
             fetch('/api/connect', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ server_id: selectedServer, socket_id: socket.id, type: currentDeviceType, password: trimmedPassword })
+                body: JSON.stringify({
+                    server_id: selectedServer,
+                    socket_id: socket.id,
+                    type: 'desktop',
+                    password: trimmedPassword
+                })
             })
                 .then(res => res.json())
                 .then(data => {
                     if (window.RC_VERBOSE) console.log('[browser] connect response', data);
                     if (data.status === 'connected') {
+                        saveRecentServer(selectedServer, trimmedPassword, selectedServer);
+                        renderRecentServers();
                         statusDiv.className = 'status';
                         statusDiv.textContent = 'Waiting for server authorization...';
                     } else {
@@ -763,7 +807,7 @@
                     body: JSON.stringify({
                         server_id: retryServerId,
                         socket_id: socket.id,
-                        type: retryServerType,
+                        type: 'desktop',
                         password: retryPassword
                     })
                 });
@@ -800,17 +844,20 @@
             showPasswordModal(address, type, element);
         }
 
-        function connectToAndroid(deviceId, element) {
-            document.querySelectorAll('.server-item').forEach(el => el.classList.remove('selected'));
-            if (element) element.classList.add('selected');
-            selectedServer = deviceId;
-            currentDeviceType = 'android';
-            showPasswordModal(deviceId, 'android', element);
-        }
-
-
         async function closeWebRTCConnection() {
             isConnected = false;
+            if (touchpadHold?.timer) clearTimeout(touchpadHold.timer);
+            touchpadHold = null;
+            touchGesture = null;
+            screenZoom = 1;
+            screenOffsetX = 0;
+            screenOffsetY = 0;
+            pinchGesture = null;
+            const screenContent = document.getElementById('screenContent');
+            if (screenContent) {
+                screenContent.style.transform = 'scale(1)';
+                screenContent.style.transformOrigin = '0 0';
+            }
             const channel = webrtcChannel;
             const peer = webrtcPeer;
             if (channel) {
@@ -836,6 +883,12 @@
                 remoteCursorImg.style.display = 'none';
                 remoteCursorImg.src = '';
             }
+            const remoteVideo = document.getElementById('remoteVideo');
+            if (remoteVideo) {
+                remoteVideo.pause();
+                remoteVideo.srcObject = null;
+            }
+            remoteMediaStream = null;
             const canvasEl = document.getElementById('screen');
             if (canvasEl) {
                 const ctx = canvasEl.getContext('2d');
@@ -848,11 +901,6 @@
             if (keyboardInput) {
                 keyboardInput.value = '';
                 delete keyboardInput.dataset.setup;
-            }
-            const androidKeyboardInput = document.getElementById('androidKeyboardInput');
-            if (androidKeyboardInput) {
-                androidKeyboardInput.value = '';
-                delete androidKeyboardInput.dataset.setup;
             }
             resetControlPanels();
         }
@@ -874,6 +922,60 @@
             const defaultTab = document.getElementById('panel-mouse');
             if (defaultButton) defaultButton.classList.add('active');
             if (defaultTab) defaultTab.classList.add('active');
+            setTouchInputMode(getStoredTouchInputMode());
+        }
+
+        function getStoredTouchInputMode() {
+            try {
+                return localStorage.getItem('remoteControl.touchInputMode') === 'touch' ? 'touch' : 'touchpad';
+            } catch (error) {
+                return 'touchpad';
+            }
+        }
+
+        function setTouchInputMode(mode) {
+            touchInputMode = mode === 'touchpad' ? 'touchpad' : 'touch';
+            try {
+                localStorage.setItem('remoteControl.touchInputMode', touchInputMode);
+            } catch (error) {
+            }
+            document.querySelectorAll('.mode-option').forEach(button => {
+                button.classList.toggle('active', button.dataset.mode === touchInputMode);
+            });
+            const description = document.getElementById('touchModeDescription');
+            if (description) {
+                description.textContent = touchInputMode === 'touchpad'
+                    ? 'Slide to move the cursor; tap to click at the cursor.'
+                    : 'Press to hold the mouse button; release to finish the drag.';
+            }
+        }
+
+        function getStoredStreamSettings() {
+            try {
+                const stored = JSON.parse(localStorage.getItem(STREAM_SETTINGS_STORAGE_KEY) || '{}');
+                const quality = QUALITY_PROFILES.includes(stored.quality) ? stored.quality : 'medium';
+                const fps = [24, 30, 60].includes(Number(stored.fps)) ? Number(stored.fps) : 30;
+                return { quality, fps };
+            } catch (error) {
+                return { quality: 'medium', fps: 30 };
+            }
+        }
+
+        function saveStreamSettings(settings) {
+            try {
+                localStorage.setItem(STREAM_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+            } catch (error) {
+            }
+        }
+
+        function applyStoredStreamSettings() {
+            const settings = getStoredStreamSettings();
+            const fpsSelect = document.getElementById('fpsSelect');
+            if (fpsSelect) fpsSelect.value = String(settings.fps);
+            document.querySelectorAll('[data-quality]').forEach(button => {
+                button.classList.toggle('active', button.dataset.quality === settings.quality);
+            });
+            return settings;
         }
 
         function startWebRTCSession() {
@@ -882,74 +984,50 @@
             const pc = new RTCPeerConnection({ iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }] });
             webrtcPeer = pc;
             webrtcReady = false;
+            const streamSettings = applyStoredStreamSettings();
 
             const channel = pc.createDataChannel('control');
             webrtcChannel = channel;
             try {
                 pc.addTransceiver('video', { direction: 'recvonly' });
+                pc.addTransceiver('audio', { direction: 'recvonly' });
             } catch (e) {
-                console.warn('addTransceiver(video) not supported:', e);
+                console.warn('addTransceiver not supported:', e);
             }
-            const remoteVideo = document.createElement('video');
-            remoteVideo.autoplay = true;
-            remoteVideo.playsInline = true;
-            remoteVideo.muted = true;
-            remoteVideo.style.display = 'none';
-            document.body.appendChild(remoteVideo);
+            const remoteVideo = document.getElementById('remoteVideo');
+            if (!remoteVideo) {
+                console.error('[browser] remote video element is missing');
+                return;
+            }
             pc.ontrack = (event) => {
                 try {
-                    if (event.streams && event.streams[0]) {
-                        remoteVideo.srcObject = event.streams[0];
-                    } else {
-                        const ms = new MediaStream();
-                        ms.addTrack(event.track);
-                        remoteVideo.srcObject = ms;
+                    if (!remoteMediaStream) remoteMediaStream = new MediaStream();
+                    if (!remoteMediaStream.getTracks().some(track => track.id === event.track.id)) {
+                        remoteMediaStream.addTrack(event.track);
                     }
+                    remoteVideo.srcObject = remoteMediaStream;
                     console.log('[browser] ontrack event, track kind=', event.track && event.track.kind);
                     remoteVideo.onplaying = () => { console.log('[browser] remoteVideo playing'); };
-                    remoteVideo.onloadedmetadata = () => { console.log('[browser] remoteVideo loadedmetadata', remoteVideo.videoWidth, remoteVideo.videoHeight); };
-                    startVideoRenderLoop();
+                    remoteVideo.onloadedmetadata = () => {
+                        screenWidth = remoteVideo.videoWidth || screenWidth;
+                        screenHeight = remoteVideo.videoHeight || screenHeight;
+                        if (canvas) {
+                            canvas.width = screenWidth;
+                            canvas.height = screenHeight;
+                        }
+                        console.log('[browser] remoteVideo loadedmetadata', remoteVideo.videoWidth, remoteVideo.videoHeight);
+                    };
+                    remoteVideo.play().catch(() => {});
                 } catch (e) {
                     console.error('ontrack error', e);
                 }
             };
-            let _videoRenderRunning = false;
-            function startVideoRenderLoop() {
-                if (_videoRenderRunning) return;
-                _videoRenderRunning = true;
-                const render = () => {
-                    try {
-                        if (!remoteVideo || remoteVideo.readyState < 2) {
-                            requestAnimationFrame(render);
-                            return;
-                        }
-                        if (canvas && ctx) {
-                            if (canvas.width !== remoteVideo.videoWidth || canvas.height !== remoteVideo.videoHeight) {
-                                canvas.width = remoteVideo.videoWidth || canvas.width;
-                                canvas.height = remoteVideo.videoHeight || canvas.height;
-                                console.log('[browser] canvas resized to', canvas.width, canvas.height);
-                            }
-                            ctx.drawImage(remoteVideo, 0, 0);
-                            if (window.RC_VERBOSE) {
-                                if (!startVideoRenderLoop._count) startVideoRenderLoop._count = 0;
-                                if (startVideoRenderLoop._count < 5) {
-                                    console.log('[browser] rendered video frame', startVideoRenderLoop._count+1);
-                                    startVideoRenderLoop._count++;
-                                }
-                            }
-                            updateCursorDisplay();
-                        }
-                    } catch (err) {
-                        console.warn('video render error', err);
-                    }
-                    requestAnimationFrame(render);
-                };
-                requestAnimationFrame(render);
-            }
 
             channel.onopen = () => {
                 if (window.RC_VERBOSE) console.log('[browser] datachannel open');
                 webrtcReady = true;
+                sendCommand({ type: 'set_quality_profile', profile: streamSettings.quality });
+                sendCommand({ type: 'set_stream_setting', setting: 'fps', value: streamSettings.fps });
                 const statusDiv = document.getElementById('status');
                 if (statusDiv) {
                     statusDiv.className = 'status connected';
@@ -1024,7 +1102,7 @@
                         canvas.width = img.width;
                         canvas.height = img.height;
                         ctx.drawImage(img, 0, 0);
-                        if (payload.cursorImage && currentDeviceType !== 'android') {
+                        if (payload.cursorImage) {
                             const src = 'data:image/png;base64,' + payload.cursorImage;
                             if (src !== lastCursorImgSrc) {
                                 remoteCursorImg.src = src;
@@ -1330,7 +1408,7 @@
                         canvas.height = img.height;
                         ctx.drawImage(img, 0, 0);
 
-                        if (data.cursorImage && currentDeviceType !== 'android') {
+                        if (data.cursorImage) {
                             const src = 'data:image/png;base64,' + data.cursorImage;
                             if (src !== lastCursorImgSrc) {
                                 remoteCursorImg.src = src;
@@ -1387,45 +1465,83 @@
 
         function updateCursorDisplay() {
             if (!canvas) return;
-            const rect = canvas.getBoundingClientRect();
+            const rect = getVideoContentRect();
+            if (!rect.width || !rect.height) return;
             const cx = Math.round(lastMouseX * rect.width / screenWidth) + rect.left;
             const cy = Math.round(lastMouseY * rect.height / screenHeight) + rect.top;
             const displayScale = rect.width / screenWidth;
+            const contentRect = document.getElementById('screenContent')?.getBoundingClientRect();
+            const localX = contentRect ? (cx - contentRect.left) / screenZoom : cx;
+            const localY = contentRect ? (cy - contentRect.top) / screenZoom : cy;
 
-            if (cursorImageAvailable && currentDeviceType !== 'android') {
-                remoteCursorImg.style.left = (cx - cursorHotspotX) + 'px';
-                remoteCursorImg.style.top = (cy - cursorHotspotY) + 'px';
-                remoteCursorImg.style.transform = `scale(${displayScale})`;
+            if (cursorImageAvailable) {
+                remoteCursorImg.style.left = (localX - cursorHotspotX) + 'px';
+                remoteCursorImg.style.top = (localY - cursorHotspotY) + 'px';
+                remoteCursorImg.style.transform = `scale(${displayScale / screenZoom})`;
                 remoteCursorImg.style.transformOrigin = `${cursorHotspotX}px ${cursorHotspotY}px`;
                 document.getElementById('remoteCursorCircle').style.display = 'none';
             } else {
                 const circle = document.getElementById('remoteCursorCircle');
-                const circleSize = 10 * displayScale;
+                const circleSize = 10 * displayScale / screenZoom;
                 circle.style.width = circleSize + 'px';
                 circle.style.height = circleSize + 'px';
-                circle.style.left = (cx - circleSize / 2) + 'px';
-                circle.style.top = (cy - circleSize / 2) + 'px';
-                circle.style.borderWidth = Math.max(1, Math.ceil(displayScale)) + 'px';
+                circle.style.left = (localX - circleSize / 2) + 'px';
+                circle.style.top = (localY - circleSize / 2) + 'px';
+                circle.style.borderWidth = Math.max(1, Math.ceil(displayScale / screenZoom)) + 'px';
                 circle.style.display = 'block';
             }
         }
 
+        function centerRemoteCursor() {
+            lastMouseX = Math.round(screenWidth / 2);
+            lastMouseY = Math.round(screenHeight / 2);
+            sendCommand({
+                type: 'mouse_move',
+                x: lastMouseX / screenWidth,
+                y: lastMouseY / screenHeight,
+                normalized: true
+            });
+            updateCursorDisplay();
+        }
+
+        function getVideoContentRect() {
+            const video = document.getElementById('remoteVideo');
+            if (!video) return { left: 0, top: 0, width: 0, height: 0 };
+            const box = video.getBoundingClientRect();
+            const videoWidth = video.videoWidth || screenWidth;
+            const videoHeight = video.videoHeight || screenHeight;
+            const scale = Math.min(box.width / videoWidth, box.height / videoHeight);
+            const width = videoWidth * scale;
+            const height = videoHeight * scale;
+            return {
+                left: box.left + (box.width - width) / 2,
+                top: box.top + (box.height - height) / 2,
+                width,
+                height,
+            };
+        }
+
         function setupMouseEvents() {
             if (mouseSetupDone) return;
+            const remoteVideo = document.getElementById('remoteVideo');
+            if (!remoteVideo) return;
             mouseSetupDone = true;
-            if (!canvas) canvas = document.getElementById('screen');
-            if (!canvas) return;
 
-            let cachedRect = canvas.getBoundingClientRect();
+            let cachedRect = getVideoContentRect();
             let pendingMove = null;
             let rafId = 0;
 
             function coordsFromClient(clientX, clientY) {
                 const displayX = clientX - cachedRect.left;
                 const displayY = clientY - cachedRect.top;
-                const screenX = Math.round(displayX * screenWidth / cachedRect.width);
-                const screenY = Math.round(displayY * screenHeight / cachedRect.height);
+                const screenX = Math.round(displayX * screenWidth / Math.max(1, cachedRect.width));
+                const screenY = Math.round(displayY * screenHeight / Math.max(1, cachedRect.height));
                 return { screenX, screenY };
+            }
+
+            function isInsideVideo(clientX, clientY) {
+                return clientX >= cachedRect.left && clientX <= cachedRect.right
+                    && clientY >= cachedRect.top && clientY <= cachedRect.bottom;
             }
 
             function flushPendingMove() {
@@ -1435,19 +1551,22 @@
                 rafId = 0;
             }
 
-            canvas.addEventListener('mouseenter', () => {
-                cachedRect = canvas.getBoundingClientRect();
+            remoteVideo.addEventListener('mouseenter', () => {
+                cachedRect = getVideoContentRect();
             });
 
-            canvas.addEventListener('mousemove', (e) => {
+            remoteVideo.addEventListener('mousemove', (e) => {
+                cachedRect = getVideoContentRect();
+                cachedRect.right = cachedRect.left + cachedRect.width;
+                cachedRect.bottom = cachedRect.top + cachedRect.height;
+                if (!cachedRect.width || !cachedRect.height || !isInsideVideo(e.clientX, e.clientY)) return;
                 const coords = coordsFromClient(e.clientX, e.clientY);
-                lastMouseX = coords.screenX;
-                lastMouseY = coords.screenY;
+                if (touchInputMode !== 'touchpad') {
+                    lastMouseX = coords.screenX;
+                    lastMouseY = coords.screenY;
+                }
                 updateCursorDisplay();
 
-                if (currentDeviceType === 'android') {
-                    return;
-                }
 
                 pendingMove = { x: coords.screenX, y: coords.screenY };
                 if (!rafId) {
@@ -1455,54 +1574,275 @@
                 }
             });
 
-            canvas.addEventListener('mousedown', (e) => {
+            remoteVideo.addEventListener('mousedown', (e) => {
+                if (Date.now() < ignoreMouseUntil) return;
                 e.preventDefault();
+                cachedRect = getVideoContentRect();
+                cachedRect.right = cachedRect.left + cachedRect.width;
+                cachedRect.bottom = cachedRect.top + cachedRect.height;
+                if (!cachedRect.width || !cachedRect.height || !isInsideVideo(e.clientX, e.clientY)) return;
                 const coords = coordsFromClient(e.clientX, e.clientY);
                 lastMouseX = coords.screenX;
                 lastMouseY = coords.screenY;
                 updateCursorDisplay();
 
-                if (currentDeviceType === 'android') {
-                    sendCommand({ type: 'tap', x: coords.screenX, y: coords.screenY });
-                } else {
-                    const button = e.button === 0 ? 'left' : e.button === 2 ? 'right' : 'middle';
-                    sendCommand({ type: 'mouse_down', button, x: coords.screenX / screenWidth, y: coords.screenY / screenHeight, normalized: true });
-                }
+                const button = e.button === 0 ? 'left' : e.button === 2 ? 'right' : 'middle';
+                sendCommand({ type: 'mouse_down', button, x: coords.screenX / screenWidth, y: coords.screenY / screenHeight, normalized: true });
             });
 
-            canvas.addEventListener('mouseup', (e) => {
+            remoteVideo.addEventListener('mouseup', (e) => {
+                if (Date.now() < ignoreMouseUntil) return;
                 e.preventDefault();
+                cachedRect = getVideoContentRect();
+                cachedRect.right = cachedRect.left + cachedRect.width;
+                cachedRect.bottom = cachedRect.top + cachedRect.height;
+                if (!cachedRect.width || !cachedRect.height || !isInsideVideo(e.clientX, e.clientY)) return;
                 const coords = coordsFromClient(e.clientX, e.clientY);
                 lastMouseX = coords.screenX;
                 lastMouseY = coords.screenY;
                 updateCursorDisplay();
 
-                if (currentDeviceType !== 'android') {
-                    const button = e.button === 0 ? 'left' : e.button === 2 ? 'right' : 'middle';
-                    sendCommand({ type: 'mouse_up', button, x: coords.screenX / screenWidth, y: coords.screenY / screenHeight, normalized: true });
-                }
+                const button = e.button === 0 ? 'left' : e.button === 2 ? 'right' : 'middle';
+                sendCommand({ type: 'mouse_up', button, x: coords.screenX / screenWidth, y: coords.screenY / screenHeight, normalized: true });
             });
 
-            canvas.addEventListener('wheel', (e) => {
+            remoteVideo.addEventListener('wheel', (e) => {
                 e.preventDefault();
-                if (currentDeviceType === 'android') {
-                    return;
-                }
+                cachedRect = getVideoContentRect();
+                cachedRect.right = cachedRect.left + cachedRect.width;
+                cachedRect.bottom = cachedRect.top + cachedRect.height;
+                if (!isInsideVideo(e.clientX, e.clientY)) return;
                 const clicks = e.deltaY > 0 ? -1 : 1;
                 sendCommand({ type: 'mouse_scroll', clicks });
             }, { passive: false });
 
-            canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+            remoteVideo.addEventListener('contextmenu', (e) => e.preventDefault());
+
+            const screenArea = document.querySelector('.screen-area');
+            const screenContent = document.getElementById('screenContent');
+            const applyScreenTransform = () => {
+                if (!screenContent || !screenArea) return;
+                const areaRect = screenArea.getBoundingClientRect();
+                const maxOffsetX = Math.max(0, areaRect.width * (screenZoom - 1));
+                const maxOffsetY = Math.max(0, areaRect.height * (screenZoom - 1));
+                screenOffsetX = Math.max(-maxOffsetX, Math.min(0, screenOffsetX));
+                screenOffsetY = Math.max(-maxOffsetY, Math.min(0, screenOffsetY));
+                screenContent.style.transformOrigin = '0 0';
+                screenContent.style.transform = `translate3d(${screenOffsetX}px, ${screenOffsetY}px, 0) scale(${screenZoom})`;
+            };
+            const ensureCursorVisible = () => {
+                if (!screenArea || screenZoom <= 1) return;
+                const areaRect = screenArea.getBoundingClientRect();
+                const video = document.getElementById('remoteVideo');
+                const videoWidth = video?.videoWidth || screenWidth;
+                const videoHeight = video?.videoHeight || screenHeight;
+                const baseScale = Math.min(areaRect.width / videoWidth, areaRect.height / videoHeight);
+                const baseWidth = videoWidth * baseScale;
+                const baseHeight = videoHeight * baseScale;
+                const baseLeft = (areaRect.width - baseWidth) / 2;
+                const baseTop = (areaRect.height - baseHeight) / 2;
+                const cursorX = areaRect.left + screenOffsetX + baseLeft * screenZoom + (lastMouseX * baseScale) * screenZoom;
+                const cursorY = areaRect.top + screenOffsetY + baseTop * screenZoom + (lastMouseY * baseScale) * screenZoom;
+                const centerX = areaRect.left + areaRect.width / 2;
+                const centerY = areaRect.top + areaRect.height / 2;
+                screenOffsetX += centerX - cursorX;
+                screenOffsetY += centerY - cursorY;
+                applyScreenTransform();
+            };
+            const pinchDistance = (touches) => {
+                const first = touches[0];
+                const second = touches[1];
+                return Math.hypot(second.clientX - first.clientX, second.clientY - first.clientY);
+            };
+            const updatePinchZoom = (event) => {
+                if (!pinchGesture || event.touches.length < 2 || !screenContent) return;
+                const first = event.touches[0];
+                const second = event.touches[1];
+                const midpointX = (first.clientX + second.clientX) / 2;
+                const midpointY = (first.clientY + second.clientY) / 2;
+                const areaRect = screenArea.getBoundingClientRect();
+                const nextZoom = Math.max(1, Math.min(3.5, pinchGesture.startZoom * pinchDistance(event.touches) / pinchGesture.startDistance));
+                const localX = (pinchGesture.startMidpointX - areaRect.left - pinchGesture.startOffsetX) / pinchGesture.startZoom;
+                const localY = (pinchGesture.startMidpointY - areaRect.top - pinchGesture.startOffsetY) / pinchGesture.startZoom;
+                screenZoom = nextZoom;
+                screenOffsetX = pinchGesture.startOffsetX + (midpointX - pinchGesture.startMidpointX) - localX * (screenZoom - pinchGesture.startZoom);
+                screenOffsetY = pinchGesture.startOffsetY + (midpointY - pinchGesture.startMidpointY) - localY * (screenZoom - pinchGesture.startZoom);
+                applyScreenTransform();
+                updateCursorDisplay();
+                if (touchInputMode === 'touchpad') ensureCursorVisible();
+            };
+            const releaseTouchpadHold = (sendClick) => {
+                if (!touchpadHold) return;
+                if (touchpadHold.timer) clearTimeout(touchpadHold.timer);
+                const hold = touchpadHold;
+                touchpadHold = null;
+                sendCommand({ type: 'mouse_up', button: 'left', x: lastMouseX / screenWidth, y: lastMouseY / screenHeight, normalized: true });
+                if (sendClick) {
+                    sendCommand({ type: 'mouse_click', button: 'left', x: hold.x / screenWidth, y: hold.y / screenHeight, normalized: true });
+                }
+            };
+            const finishTouchGesture = (event) => {
+                if (!isMobileTouchSession() || !touchGesture) return;
+                event?.preventDefault();
+                const gesture = touchGesture;
+                touchGesture = null;
+                if (gesture.button === 'right' && event?.touches?.length) {
+                    touchGesture = gesture;
+                    return;
+                }
+                if (gesture.buttonDown) {
+                    if (gesture.touchpadSecondTap && !gesture.moved) {
+                        releaseTouchpadHold(true);
+                        return;
+                    }
+                    sendCommand({ type: 'mouse_up', button: gesture.button, x: lastMouseX / screenWidth, y: lastMouseY / screenHeight, normalized: true });
+                    return;
+                }
+                if (touchInputMode !== 'touchpad' || gesture.moved) return;
+                const elapsed = performance.now() - gesture.startedAt;
+                if (elapsed > TAP_MAX_MS) return;
+                const holdX = lastMouseX;
+                const holdY = lastMouseY;
+                sendCommand({ type: 'mouse_down', button: 'left', x: holdX / screenWidth, y: holdY / screenHeight, normalized: true });
+                touchpadHold = {
+                    x: holdX,
+                    y: holdY,
+                    timer: setTimeout(() => releaseTouchpadHold(false), 250)
+                };
+            };
+
+            if (screenArea) screenArea.addEventListener('touchstart', (event) => {
+                if (!isMobileTouchSession() || event.touches.length < 1) return;
+                event.preventDefault();
+                if (event.touches.length >= 2) {
+                    if (touchpadHold) releaseTouchpadHold(false);
+                    if (touchGesture?.buttonDown) {
+                        sendCommand({ type: 'mouse_up', button: touchGesture.button, x: lastMouseX / screenWidth, y: lastMouseY / screenHeight, normalized: true });
+                    }
+                    touchGesture = null;
+                    pinchGesture = {
+                        startDistance: Math.max(1, pinchDistance(event.touches)),
+                        startZoom: screenZoom,
+                        startOffsetX: screenOffsetX,
+                        startOffsetY: screenOffsetY,
+                        startMidpointX: (event.touches[0].clientX + event.touches[1].clientX) / 2,
+                        startMidpointY: (event.touches[0].clientY + event.touches[1].clientY) / 2,
+                    };
+                    return;
+                }
+                if (pinchGesture) return;
+                const touch = event.touches[0];
+                const touchpad = touchInputMode === 'touchpad';
+                cachedRect = getVideoContentRect();
+                cachedRect.right = cachedRect.left + cachedRect.width;
+                cachedRect.bottom = cachedRect.top + cachedRect.height;
+                if (!touchpad && !isInsideVideo(touch.clientX, touch.clientY)) return;
+                const coords = touchpad
+                    ? { screenX: touch.clientX, screenY: touch.clientY }
+                    : coordsFromClient(touch.clientX, touch.clientY);
+                if (touchpad && !lastMouseX && !lastMouseY) {
+                    lastMouseX = Math.round(screenWidth / 2);
+                    lastMouseY = Math.round(screenHeight / 2);
+                }
+                let button = 'left';
+                let buttonDown = false;
+                const isSecondTouchpadTap = touchpad && touchpadHold;
+                if (isSecondTouchpadTap) {
+                    if (touchpadHold.timer) clearTimeout(touchpadHold.timer);
+                    touchpadHold.timer = null;
+                    buttonDown = true;
+                } else if (event.touches.length >= 2) {
+                    sendCommand({ type: 'mouse_down', button: 'right', x: lastMouseX / screenWidth, y: lastMouseY / screenHeight, normalized: true });
+                    button = 'right';
+                    buttonDown = true;
+                }
+                if (isSecondTouchpadTap) {
+                    touchGesture = { startX: coords.screenX, startY: coords.screenY, lastX: coords.screenX, lastY: coords.screenY, startedAt: performance.now(), moved: false, buttonDown: true, touchpadSecondTap: true, button: 'left' };
+                } else {
+                    touchGesture = { startX: coords.screenX, startY: coords.screenY, lastX: coords.screenX, lastY: coords.screenY, startedAt: performance.now(), moved: false, buttonDown, touchpadSecondTap: false, button };
+                }
+                ignoreMouseUntil = Date.now() + 500;
+                if (!touchpad) {
+                    lastMouseX = coords.screenX;
+                    lastMouseY = coords.screenY;
+                    updateCursorDisplay();
+                    sendCommand({ type: 'mouse_move', x: coords.screenX / screenWidth, y: coords.screenY / screenHeight, normalized: true });
+                    sendCommand({ type: 'mouse_down', button: 'left', x: coords.screenX / screenWidth, y: coords.screenY / screenHeight, normalized: true });
+                    touchGesture.buttonDown = true;
+                }
+            }, { passive: false });
+
+            if (screenArea) screenArea.addEventListener('touchmove', (event) => {
+                if (!isMobileTouchSession() || event.touches.length < 1) return;
+                event.preventDefault();
+                if (pinchGesture) {
+                    updatePinchZoom(event);
+                    return;
+                }
+                if (!touchGesture) return;
+                const touch = event.touches[0];
+                const point = touchInputMode === 'touchpad' ? { screenX: touch.clientX, screenY: touch.clientY } : coordsFromClient(touch.clientX, touch.clientY);
+                const deltaX = point.screenX - touchGesture.lastX;
+                const deltaY = point.screenY - touchGesture.lastY;
+                const moveDistance = Math.hypot(deltaX, deltaY);
+                const moveThreshold = touchInputMode === 'touchpad' ? TOUCHPAD_DRAG_THRESHOLD : TAP_MOVE_THRESHOLD;
+                touchGesture.pendingX = (touchGesture.pendingX || 0) + deltaX;
+                touchGesture.pendingY = (touchGesture.pendingY || 0) + deltaY;
+                touchGesture.moved = touchGesture.moved || moveDistance > moveThreshold;
+                touchGesture.lastX = point.screenX;
+                touchGesture.lastY = point.screenY;
+                if (touchInputMode === 'touchpad') {
+                    const areaRect = screenArea.getBoundingClientRect();
+                    const remoteDiagonal = Math.hypot(screenWidth, screenHeight);
+                    const touchDiagonal = Math.max(1, Math.hypot(areaRect.width, areaRect.height));
+                    const scale = (remoteDiagonal / touchDiagonal) * TOUCHPAD_SENSITIVITY / Math.max(1, screenZoom);
+                    const dragDistance = Math.hypot(touchGesture.pendingX, touchGesture.pendingY);
+                    if (!touchGesture.moved && dragDistance > 0) {
+                        touchGesture.moved = true;
+                    }
+                    if (touchGesture.moved) {
+                        lastMouseX = Math.max(0, Math.min(screenWidth - 1, lastMouseX + touchGesture.pendingX * scale));
+                        lastMouseY = Math.max(0, Math.min(screenHeight - 1, lastMouseY + touchGesture.pendingY * scale));
+                        touchGesture.pendingX = 0;
+                        touchGesture.pendingY = 0;
+                    }
+                } else {
+                    lastMouseX = point.screenX;
+                    lastMouseY = point.screenY;
+                }
+                sendCommand({ type: 'mouse_move', x: lastMouseX / screenWidth, y: lastMouseY / screenHeight, normalized: true });
+                updateCursorDisplay();
+                if (touchInputMode === 'touchpad') ensureCursorVisible();
+            }, { passive: false });
+
+            if (screenArea) screenArea.addEventListener('touchend', (event) => {
+                if (pinchGesture) {
+                    event.preventDefault();
+                    if (event.touches.length < 2) pinchGesture = null;
+                    return;
+                }
+                finishTouchGesture(event);
+            }, { passive: false });
+            if (screenArea) screenArea.addEventListener('touchcancel', (event) => {
+                if (pinchGesture) {
+                    event.preventDefault();
+                    pinchGesture = null;
+                    return;
+                }
+                finishTouchGesture(event);
+            }, { passive: false });
+            document.addEventListener('visibilitychange', () => {
+                if (document.hidden && touchGesture) finishTouchGesture(null);
+            });
+            window.addEventListener('pagehide', () => {
+                if (touchGesture) finishTouchGesture(null);
+            });
         }
 
         function setupKeyboardInput() {
             if (!currentDeviceType) return;
 
-            if (currentDeviceType === 'desktop') {
-                setupDesktopKeyboard();
-            } else if (currentDeviceType === 'android') {
-                setupAndroidKeyboard();
-            }
+            setupDesktopKeyboard();
         }
 
         function setupDesktopKeyboard() {
@@ -1512,46 +1852,19 @@
 
             input.addEventListener('keydown', (e) => {
                 e.preventDefault();
-                const specialKeys = { 'Enter': 'return', 'Backspace': 'backspace', 'Tab': 'tab', 'Escape': 'esc', ' ': 'space', 'Delete': 'delete', 'ArrowUp': 'up', 'ArrowDown': 'down', 'ArrowLeft': 'left', 'ArrowRight': 'right' };
-                if (specialKeys[e.key]) { sendKey(specialKeys[e.key]); } else if (e.key.length === 1) { sendCommand({ type: 'write', text: e.key }); }
+                const specialKeys = { 'Enter': 'return', 'Backspace': 'backspace', 'Tab': 'tab', 'Escape': 'esc', ' ': 'space', 'Delete': 'delete', 'ArrowUp': 'up', 'ArrowDown': 'down', 'ArrowLeft': 'left', 'ArrowRight': 'right', 'Control': 'ctrl', 'Shift': 'shift', 'Alt': 'alt', 'Meta': 'meta' };
+                if (specialKeys[e.key]) {
+                    sendKey(specialKeys[e.key]);
+                } else {
+                    sendCommand({ type: 'write', text: e.key });
+                    console.log(e.key);
+                }
                 input.value = '';
             });
             input.addEventListener('paste', (e) => { e.preventDefault(); const text = (e.clipboardData || window.clipboardData).getData('text'); sendCommand({ type: 'write', text: text }); input.value = ''; });
         }
 
-        function setupAndroidKeyboard() {
-            const input = document.getElementById('androidKeyboardInput');
-            if (!input || input.dataset.setup) return;
-            input.dataset.setup = 'true';
-
-            input.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    const text = input.value.trim();
-                    if (text) {
-                        sendCommand({ type: 'text', text: text });
-                        input.value = '';
-                    }
-                    return;
-                }
-                if (e.key === 'Backspace') {
-                    e.preventDefault();
-                    sendCommand({ type: 'key', key_code: 67 });
-                    return;
-                }
-            });
-        }
-
         function sendKey(key) { sendCommand({ type: 'key_press', key }); }
-
-        function sendAndroidKey(keyCode) {
-            sendCommand({ type: 'key', key_code: keyCode });
-        }
-
-        function sendAndroidVolume(direction) {
-            const key_code = direction === 'up' ? 24 : 25;
-            sendCommand({ type: 'key', key_code: key_code });
-        }
 
         function sendCommand(cmd) {
             if (webrtcReady && webrtcChannel && webrtcChannel.readyState === 'open') {
@@ -1564,28 +1877,23 @@
             }
         }
 
-        function onQualitySliderChange(e) {
-            const v = parseInt(e.target.value, 10);
-            const qv = document.getElementById('qualityValue');
-            if (v === 0) {
-                if (qv) qv.textContent = 'Auto';
-                sendCommand({ type: 'set_quality', mode: 'auto' });
-            } else {
-                if (qv) qv.textContent = v;
-                sendCommand({ type: 'set_quality', mode: 'manual', quality: v });
-            }
+        function setQualityProfile(profile) {
+            const settings = getStoredStreamSettings();
+            settings.quality = QUALITY_PROFILES.includes(profile) ? profile : 'medium';
+            saveStreamSettings(settings);
+            document.querySelectorAll('[data-quality]').forEach(button => {
+                button.classList.toggle('active', button.dataset.quality === settings.quality);
+            });
+            sendCommand({ type: 'set_quality_profile', profile: settings.quality });
         }
 
-        function onThrottleSliderChange(e) {
-            const v = parseInt(e.target.value, 10);
-            const tv = document.getElementById('throttleValue');
-            if (v === 0) {
-                if (tv) tv.textContent = 'Auto';
-                sendCommand({ type: 'set_throttle', mode: 'auto' });
-            } else {
-                if (tv) tv.textContent = `${v} ms`;
-                sendCommand({ type: 'set_throttle', mode: 'manual', interval_ms: v });
+        function setStreamSetting(setting, value) {
+            const settings = getStoredStreamSettings();
+            if (setting === 'fps') {
+                settings.fps = [24, 30, 60].includes(Number(value)) ? Number(value) : 30;
+                saveStreamSettings(settings);
             }
+            sendCommand({ type: 'set_stream_setting', setting, value });
         }
 
         window.addEventListener('resize', () => {
@@ -1602,17 +1910,24 @@
                 canvas.style.display = 'block';
                 ctx = canvas.getContext('2d');
             }
+            centerRemoteCursor();
             resetControlPanels();
 
             const qualitySection = document.getElementById('qualitySection');
-            if (currentDeviceType === 'android') {
-                if (qualitySection) qualitySection.style.display = 'none';
-            } else {
-                if (qualitySection) qualitySection.style.display = 'block';
+            if (qualitySection) qualitySection.style.display = 'block';
+            const mobileControlModeEl = document.getElementById('mobileControlMode');
+            if (mobileControlModeEl) {
+                mobileControlModeEl.hidden = !isMobileBrowser;
+                mobileControlModeEl.style.display = isMobileBrowser ? 'block' : 'none';
             }
 
             const rp = document.getElementById('rightPanel');
             if (rp) rp.classList.add('collapsed');
+            const bottomPanel = document.getElementById('bottomPanel');
+            if (bottomPanel && isMobileBrowser) {
+                bottomPanel.classList.remove('is-open');
+                bottomPanel.setAttribute('aria-hidden', 'true');
+            }
             updateHeaderWidth();
             setupKeyboardInput();
         }
@@ -1620,8 +1935,11 @@
         function disconnectAndBack() {
             closeWebRTCConnection();
             try {
-                fetch('/api/disconnect', { method: 'POST' }).catch(() => { });
-                try { socket.emit('command', { cmd: { type: 'disconnect_request' } }); } catch (e) { }
+                fetch('/api/disconnect', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ socket_id: socket.id })
+                }).catch(() => { });
             } catch (e) { }
             isConnected = false;
             currentDeviceType = null;
@@ -1741,7 +2059,12 @@
         window.addEventListener('beforeunload', (e) => {
             try {
                 if (isConnected) {
-                    fetch('/api/disconnect', { method: 'POST' }).catch(() => { });
+                    fetch('/api/disconnect', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ socket_id: socket.id }),
+                        keepalive: true
+                    }).catch(() => { });
                 }
             } catch (ex) { }
         });
