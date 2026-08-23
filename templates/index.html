@@ -310,7 +310,6 @@
         let tabSwitchTimer = null;
         let viewSwitchTimer = null;
         let keyboardTabSwitchTimer = null;
-        let currentDeviceType = null;
         let canvas = null;
         let ctx = null;
         let webrtcPeer = null;
@@ -321,16 +320,11 @@
         let remoteDescriptionSet = false;
 
         let lastMouseX = 0, lastMouseY = 0;
-        let isMouseDown = false;
-
-        let keyboardSetupDone = false;
         let mouseSetupDone = false;
         const TAP_MAX_MS = 250;
         const TAP_MOVE_THRESHOLD = 10;
         const TOUCHPAD_DRAG_THRESHOLD = 4;
         const TOUCHPAD_SENSITIVITY = 1.6;
-        let touchStartTime = 0;
-        let touchMoved = false;
 
         const __serverItems = [];
         const __recentItems = [];
@@ -338,11 +332,10 @@
         let remoteCursorImg = null;
         let cursorHotspotX = 0, cursorHotspotY = 0;
         let cursorImageAvailable = false;
-        const isMobileBrowser = detectMobileBrowser();
-        let cursorScale = 1.0;
+        let isMobileBrowser = detectMobileBrowser();
+        let isMobileTouchSession = () => isMobileBrowser;
         let retryPassword = '';
         let retryServerId = null;
-        let retryServerType = null;
         let suppressConnectionOverlay = false;
         let retryInProgress = false;
         let touchInputMode = 'touchpad';
@@ -367,14 +360,9 @@
         function detectMobileBrowser() {
             const userAgentData = navigator.userAgentData;
             const userAgent = navigator.userAgent || '';
-            const mobileUserAgent = /Android|webOS|iPhone|iPod|BlackBerry|IEMobile|Opera Mini|Mobile/i.test(userAgent);
-            const isIPadOSDesktopMode = navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
+            const mobileUserAgent = /android|iphone|ipod|mobile/i.test(userAgent.toLowerCase());
             const mobileUserAgentData = userAgentData && userAgentData.mobile === true;
-            return mobileUserAgentData || mobileUserAgent || isIPadOSDesktopMode;
-        }
-
-        function isMobileTouchSession() {
-            return isMobileBrowser && Boolean(currentDeviceType);
+            return mobileUserAgentData || mobileUserAgent || navigator.maxTouchPoints > 1;
         }
 
         function updateHeaderScrollbar() {
@@ -450,7 +438,6 @@
         }
 
         window.addEventListener('load', () => {
-            document.body.dataset.browserMobile = String(isMobileBrowser);
             setTouchInputMode(getStoredTouchInputMode());
             canvas = document.getElementById('screen');
             if (canvas) {
@@ -594,7 +581,7 @@
                         const item = document.createElement('div');
                         item.className = 'server-item';
                         item.innerHTML = `<span>${server.hostname || 'Unknown'}</span><br><span class="muted-text small">${server.address}</span>`;
-                        item.onclick = () => connectToServer(server.address, item, 'desktop');
+                        item.onclick = () => connectToServer(server.address, item);
                         serverList.appendChild(item);
                         __serverItems.push({ element: item, text: ((server.hostname || '') + ' ' + server.address + ' ' + (server.ip || '')).toLowerCase() });
                     });
@@ -603,7 +590,7 @@
                 })
                 .catch(() => {
                     const statusDiv = document.getElementById('status');
-                    statusDiv.className = 'status';
+                    statusDiv.className = 'status error';
                     statusDiv.textContent = 'Search failed';
                 });
         }
@@ -647,7 +634,6 @@
             document.querySelectorAll('.server-item').forEach(el => el.classList.remove('selected'));
             element.classList.add('selected');
             selectedServer = server.address;
-            currentDeviceType = 'desktop';
             connectToSelectedServer(server.password);
         }
 
@@ -665,14 +651,13 @@
             });
         }
 
-        function showPasswordModal(targetAddress, type, element) {
+        function showPasswordModal(targetAddress, element) {
             const statusDiv = document.getElementById('status');
             statusDiv.className = 'status loading';
             statusDiv.textContent = 'Awaiting password...';
             document.querySelectorAll('.server-item').forEach(el => el.classList.remove('selected'));
             if (element) element.classList.add('selected');
             selectedServer = targetAddress;
-            currentDeviceType = type;
             document.getElementById('modalServerInfo').textContent = `Connecting to ${targetAddress}`;
             document.getElementById('passwordInput').value = '';
             document.getElementById('passwordModal').classList.add('active');
@@ -699,7 +684,6 @@
             statusDiv.className = 'status';
             statusDiv.textContent = 'Cancelled';
             selectedServer = null;
-            currentDeviceType = null;
         }
 
         function submitPasswordModal(event) {
@@ -716,8 +700,8 @@
 
         function connectToSelectedServer(trimmedPassword) {
             const statusDiv = document.getElementById('status');
-            if (!selectedServer || !currentDeviceType) {
-                statusDiv.className = 'status';
+            if (!selectedServer) {
+                statusDiv.className = 'status error';
                 statusDiv.textContent = 'No server selected';
                 return;
             }
@@ -725,7 +709,6 @@
             hideConnectionOverlay();
             retryPassword = trimmedPassword;
             retryServerId = selectedServer;
-            retryServerType = currentDeviceType;
 
             fetch('/api/connect', {
                 method: 'POST',
@@ -733,7 +716,6 @@
                 body: JSON.stringify({
                     server_id: selectedServer,
                     socket_id: socket.id,
-                    type: 'desktop',
                     password: trimmedPassword
                 })
             })
@@ -781,7 +763,7 @@
 
             retryInProgress = true;
             hideConnectionOverlay();
-            if (!retryServerId || !retryServerType || !retryPassword) {
+            if (!retryServerId || !retryPassword) {
                 retryInProgress = false;
                 disconnectAndBack();
                 return;
@@ -789,7 +771,6 @@
 
             suppressConnectionOverlay = true;
             selectedServer = retryServerId;
-            currentDeviceType = retryServerType;
             await closeWebRTCConnection();
             hideConnectionOverlay();
 
@@ -807,7 +788,6 @@
                     body: JSON.stringify({
                         server_id: retryServerId,
                         socket_id: socket.id,
-                        type: 'desktop',
                         password: retryPassword
                     })
                 });
@@ -840,8 +820,8 @@
             }
         }
 
-        function connectToServer(address, element, type) {
-            showPasswordModal(address, type, element);
+        function connectToServer(address, element) {
+            showPasswordModal(address, element);
         }
 
         async function closeWebRTCConnection() {
@@ -894,8 +874,6 @@
                 const ctx = canvasEl.getContext('2d');
                 ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
             }
-            isMouseDown = false;
-            keyboardSetupDone = false;
             mouseSetupDone = false;
             const keyboardInput = document.getElementById('keyboardInput');
             if (keyboardInput) {
@@ -1454,7 +1432,7 @@
             try {
                 const statusDiv = document.getElementById('status');
                 if (data && data.server_id && selectedServer && data.server_id === selectedServer) {
-                    statusDiv.className = 'status';
+                    statusDiv.className = 'status error';
                     statusDiv.textContent = 'Authentication failed';
                     selectedServer = null;
                 }
@@ -1467,12 +1445,12 @@
             if (!canvas) return;
             const rect = getVideoContentRect();
             if (!rect.width || !rect.height) return;
-            const cx = Math.round(lastMouseX * rect.width / screenWidth) + rect.left;
-            const cy = Math.round(lastMouseY * rect.height / screenHeight) + rect.top;
+            const cx = rect.left + Math.round(lastMouseX * rect.width / Math.max(1, screenWidth));
+            const cy = rect.top + Math.round(lastMouseY * rect.height / Math.max(1, screenHeight));
             const displayScale = rect.width / screenWidth;
-            const contentRect = document.getElementById('screenContent')?.getBoundingClientRect();
-            const localX = contentRect ? (cx - contentRect.left) / screenZoom : cx;
-            const localY = contentRect ? (cy - contentRect.top) / screenZoom : cy;
+            const areaRect = document.querySelector('.screen-area')?.getBoundingClientRect();
+            const localX = areaRect ? (cx - areaRect.left - screenOffsetX) / screenZoom : cx;
+            const localY = areaRect ? (cy - areaRect.top - screenOffsetY) / screenZoom : cy;
 
             if (cursorImageAvailable) {
                 remoteCursorImg.style.left = (localX - cursorHotspotX) + 'px';
@@ -1507,17 +1485,19 @@
         function getVideoContentRect() {
             const video = document.getElementById('remoteVideo');
             if (!video) return { left: 0, top: 0, width: 0, height: 0 };
-            const box = video.getBoundingClientRect();
+            const area = document.querySelector('.screen-area');
+            if (!area) return { left: 0, top: 0, width: 0, height: 0 };
+            const box = area.getBoundingClientRect();
             const videoWidth = video.videoWidth || screenWidth;
             const videoHeight = video.videoHeight || screenHeight;
             const scale = Math.min(box.width / videoWidth, box.height / videoHeight);
             const width = videoWidth * scale;
             const height = videoHeight * scale;
             return {
-                left: box.left + (box.width - width) / 2,
-                top: box.top + (box.height - height) / 2,
-                width,
-                height,
+                left: box.left + screenOffsetX + (box.width - width) * screenZoom / 2,
+                top: box.top + screenOffsetY + (box.height - height) * screenZoom / 2,
+                width: width * screenZoom,
+                height: height * screenZoom,
             };
         }
 
@@ -1620,35 +1600,62 @@
 
             const screenArea = document.querySelector('.screen-area');
             const screenContent = document.getElementById('screenContent');
-            const applyScreenTransform = () => {
-                if (!screenContent || !screenArea) return;
-                const areaRect = screenArea.getBoundingClientRect();
-                const maxOffsetX = Math.max(0, areaRect.width * (screenZoom - 1));
-                const maxOffsetY = Math.max(0, areaRect.height * (screenZoom - 1));
-                screenOffsetX = Math.max(-maxOffsetX, Math.min(0, screenOffsetX));
-                screenOffsetY = Math.max(-maxOffsetY, Math.min(0, screenOffsetY));
-                screenContent.style.transformOrigin = '0 0';
-                screenContent.style.transform = `translate3d(${screenOffsetX}px, ${screenOffsetY}px, 0) scale(${screenZoom})`;
-            };
-            const ensureCursorVisible = () => {
-                if (!screenArea || screenZoom <= 1) return;
+            const getMediaLayout = () => {
+                if (!screenArea) return null;
                 const areaRect = screenArea.getBoundingClientRect();
                 const video = document.getElementById('remoteVideo');
                 const videoWidth = video?.videoWidth || screenWidth;
                 const videoHeight = video?.videoHeight || screenHeight;
-                const baseScale = Math.min(areaRect.width / videoWidth, areaRect.height / videoHeight);
-                const baseWidth = videoWidth * baseScale;
-                const baseHeight = videoHeight * baseScale;
-                const baseLeft = (areaRect.width - baseWidth) / 2;
-                const baseTop = (areaRect.height - baseHeight) / 2;
-                const cursorX = areaRect.left + screenOffsetX + baseLeft * screenZoom + (lastMouseX * baseScale) * screenZoom;
-                const cursorY = areaRect.top + screenOffsetY + baseTop * screenZoom + (lastMouseY * baseScale) * screenZoom;
-                const centerX = areaRect.left + areaRect.width / 2;
-                const centerY = areaRect.top + areaRect.height / 2;
-                screenOffsetX += centerX - cursorX;
-                screenOffsetY += centerY - cursorY;
+                if (!areaRect.width || !areaRect.height || !videoWidth || !videoHeight) return null;
+                const scale = Math.min(areaRect.width / videoWidth, areaRect.height / videoHeight);
+                return {
+                    width: videoWidth * scale,
+                    height: videoHeight * scale,
+                    left: (areaRect.width - videoWidth * scale) / 2,
+                    top: (areaRect.height - videoHeight * scale) / 2,
+                    areaWidth: areaRect.width,
+                    areaHeight: areaRect.height
+                };
+            };
+            const applyScreenTransform = () => {
+                if (!screenContent) return;
+                const media = getMediaLayout();
+                if (!media) return;
+                const scaledWidth = media.width * screenZoom;
+                const scaledHeight = media.height * screenZoom;
+                const centeredOffsetX = (media.areaWidth - scaledWidth) / 2 - media.left * screenZoom;
+                const centeredOffsetY = (media.areaHeight - scaledHeight) / 2 - media.top * screenZoom;
+                if (scaledWidth <= media.areaWidth) {
+                    screenOffsetX = centeredOffsetX;
+                } else {
+                    const minOffsetX = media.areaWidth - (media.left + media.width) * screenZoom;
+                    const maxOffsetX = -media.left * screenZoom;
+                    screenOffsetX = Math.max(minOffsetX, Math.min(maxOffsetX, screenOffsetX));
+                }
+                if (scaledHeight <= media.areaHeight) {
+                    screenOffsetY = centeredOffsetY;
+                } else {
+                    const minOffsetY = media.areaHeight - (media.top + media.height) * screenZoom;
+                    const maxOffsetY = -media.top * screenZoom;
+                    screenOffsetY = Math.max(minOffsetY, Math.min(maxOffsetY, screenOffsetY));
+                }
+                screenContent.style.transformOrigin = '0 0';
+                screenContent.style.transform = `translate3d(${screenOffsetX}px, ${screenOffsetY}px, 0) scale(${screenZoom})`;
+            };
+            const ensureCursorVisible = () => {
+                const media = getMediaLayout();
+                if (!media) return;
+                screenOffsetX = media.areaWidth / 2
+                    - (media.left + lastMouseX * media.width / Math.max(1, screenWidth)) * screenZoom;
+                screenOffsetY = media.areaHeight / 2
+                    - (media.top + lastMouseY * media.height / Math.max(1, screenHeight)) * screenZoom;
                 applyScreenTransform();
             };
+            window.addEventListener('resize', () => {
+                applyScreenTransform();
+                if (touchInputMode === 'touchpad') ensureCursorVisible();
+                updateCursorDisplay();
+            });
             const pinchDistance = (touches) => {
                 const first = touches[0];
                 const second = touches[1];
@@ -1840,8 +1847,6 @@
         }
 
         function setupKeyboardInput() {
-            if (!currentDeviceType) return;
-
             setupDesktopKeyboard();
         }
 
@@ -1917,14 +1922,14 @@
             if (qualitySection) qualitySection.style.display = 'block';
             const mobileControlModeEl = document.getElementById('mobileControlMode');
             if (mobileControlModeEl) {
-                mobileControlModeEl.hidden = !isMobileBrowser;
-                mobileControlModeEl.style.display = isMobileBrowser ? 'block' : 'none';
+                mobileControlModeEl.hidden = !isMobileTouchSession();
+                mobileControlModeEl.style.display = isMobileTouchSession() ? 'block' : 'none';
             }
 
             const rp = document.getElementById('rightPanel');
             if (rp) rp.classList.add('collapsed');
             const bottomPanel = document.getElementById('bottomPanel');
-            if (bottomPanel && isMobileBrowser) {
+            if (bottomPanel && isMobileTouchSession()) {
                 bottomPanel.classList.remove('is-open');
                 bottomPanel.setAttribute('aria-hidden', 'true');
             }
@@ -1942,10 +1947,8 @@
                 }).catch(() => { });
             } catch (e) { }
             isConnected = false;
-            currentDeviceType = null;
             retryPassword = '';
             retryServerId = null;
-            retryServerType = null;
             hideConnectionOverlay();
             switchMainView('connect');
             const statusDiv = document.getElementById('status');

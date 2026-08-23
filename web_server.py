@@ -74,13 +74,12 @@ def download_server_file():
 @app.route('/api/discover-servers', methods=['GET'])
 def discover_servers():
     try:
-        now = time.time()
-        servers = []
-        for server_id, server_info in registered_servers.items():
-            if now - server_info.get('last_seen', now) > SERVER_TIMEOUT:
-                continue
-            servers.append(_server_snapshot(server_id, server_info))
-        return jsonify({'servers': servers})
+        return jsonify({
+            'servers': [
+                _server_snapshot(server_id, server_info)
+                for server_id, server_info in registered_servers.items()
+            ]
+        })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -105,7 +104,6 @@ def connect():
         'server_id': server_id,
         'socket_id': socket_id,
         'password': password.strip(),
-        'type': 'desktop',
         'created_at': time.time(),
     }
 
@@ -113,7 +111,6 @@ def connect():
         'browser_sid': socket_id,
         'server_id': server_id,
         'password': password,
-        'type': 'desktop',
     }, room=server['sid'])
 
     response = {'status': 'connected'}
