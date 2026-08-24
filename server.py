@@ -14,7 +14,6 @@ import io
 import sys
 import ctypes
 import uuid
-import hashlib
 import asyncio
 import queue
 import logging
@@ -22,40 +21,55 @@ import subprocess
 from pathlib import Path
 from ctypes import wintypes
 import socketio
-from aiortc import RTCPeerConnection, RTCSessionDescription, RTCIceCandidate, RTCConfiguration, RTCIceServer
+from aiortc import RTCPeerConnection, RTCSessionDescription, RTCConfiguration, RTCIceServer
 from aiortc.sdp import candidate_from_sdp
 import aiortc.sdp as sdp_module
 from aiortc import AudioStreamTrack, VideoStreamTrack
-import av
+from av.video.frame import VideoFrame
+from av.audio.frame import AudioFrame
 import fractions
 import traceback
 import faulthandler
+
+
+def _startup_message(message):
+    try:
+        log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
+        os.makedirs(log_dir, exist_ok=True)
+        with open(os.path.join(log_dir, 'startup.log'), 'a', encoding='utf-8') as startup_log:
+            startup_log.write(f'{time.strftime("%Y-%m-%d %H:%M:%S")} {message}\n')
+    except Exception:
+        pass
+    if sys.stdout is not None:
+        print(message)
+
+
 try:
     import pyaudiowpatch as pyaudio
 except Exception:
     pyaudio = None
-    print("pyaudiowpatch module not found. System audio capture will be disabled.")
+    _startup_message("pyaudiowpatch module not found. System audio capture will be disabled.")
 try:
     import pyautogui
 except Exception:
-    print("pyautogui module not found.")
+    _startup_message("pyautogui module not found.")
     sys.exit(1)
 try:
     import win32gui
 except Exception:
-    print("win32gui module not found. Please install pywin32 package.")
+    _startup_message("win32gui module not found. Please install pywin32 package.")
     win32gui = None
 try:
     from PIL import Image, ImageGrab, ImageDraw
 except Exception:
-    print("PIL module not found. You can install pillow package. Continuing without it.")
+    _startup_message("PIL module not found. You can install pillow package. Continuing without it.")
     Image = None
     ImageDraw = None
 try:
     import pystray
 except Exception:
     pystray = None
-    print("pystray module not found. System tray icon will be disabled.")
+    _startup_message("pystray module not found. System tray icon will be disabled.")
 
 
 VERBOSE = False
@@ -96,25 +110,28 @@ def _write_log(logger, message, level):
 
 
 def dbg(msg):
-    if VERBOSE:
-        print(f'[debug] {msg}')
     _write_log(DEBUG_LOGGER, msg, logging.DEBUG)
+    if VERBOSE and sys.stdout is not None:
+        print(f'[debug] {msg}')
 
 
 def vdbg(msg):
     if VERBOSE:
-        print(f'[debug] {msg}')
         _write_log(DEBUG_LOGGER, msg, logging.DEBUG)
+        if sys.stdout is not None:
+            print(f'[debug] {msg}')
 
 
 def info(msg):
-    print(f'[info] {msg}')
     _write_log(INFO_LOGGER, msg, logging.INFO)
+    if sys.stdout is not None:
+        print(f'[info] {msg}')
 
 
 def error(msg):
-    print(f'[error] {msg}')
     _write_log(ERROR_LOGGER, msg, logging.ERROR)
+    if sys.stdout is not None:
+        print(f'[error] {msg}')
 
 
 def loop_running(loop):
@@ -152,7 +169,7 @@ def capture_cursor_as_png():
     if not win32gui or not Image:
         return None
     try:
-        flags, hcursor, (cx, cy) = win32gui.GetCursorInfo()
+        _, hcursor, (_, _) = win32gui.GetCursorInfo()
         if not hcursor:
             return None
         icon_info = win32gui.GetIconInfo(hcursor)
@@ -223,7 +240,7 @@ try:
     import cv2
 except ImportError:
     if Image is None:
-        print("cv2 module not found. Please install opencv-python package.")
+        _startup_message("cv2 module not found. Please install opencv-python package.")
         sys.exit(1)
 
     class _CV2Fallback:
@@ -246,7 +263,7 @@ except ImportError:
             return np.array(img)[...,::-1]
 
         @staticmethod
-        def imencode(ext, frame, params=None):
+        def imencode(_, frame, params=None):
             img = Image.fromarray(frame[...,::-1])
             buf = io.BytesIO()
             quality = 85
@@ -320,7 +337,8 @@ AUTH_TIMEOUT = 60 * 30
 tray_icon = None
 shutdown_event = threading.Event()
 
-faulthandler.enable()
+if sys.stderr is not None:
+    faulthandler.enable()
 
 
 def _thread_exception_logger(args):
@@ -340,7 +358,7 @@ def create_tray_icon():
             d.ellipse((10, 10, 54, 54), fill='#4f46e5')
             d.ellipse((20, 20, 44, 44), fill='#ffffff')
 
-            def on_quit(icon, item):
+            def on_quit(icon, _):
                 info('tray quit requested; shutting down')
                 shutdown_event.set()
                 try:
@@ -348,7 +366,7 @@ def create_tray_icon():
                 except Exception:
                     pass
 
-            def on_open_logs(icon, item):
+            def on_open_logs(_, __):
                 open_logs_folder()
                 dbg('tray open logs requested')
 
@@ -385,12 +403,12 @@ def connect_to_relay():
             relay_connected = True
             return
 
-        dbg(f'connecting to relay {args.relay_url}')
+        dbg(f'connecting to relay {relay_url}')
         try:
             relay_socket.disconnect()
         except Exception:
             pass
-        relay_socket.connect(args.relay_url, transports=['websocket'])
+        relay_socket.connect(relay_url, transports=['websocket'])
     except Exception as e:
         relay_connected = False
         error(f'relay connection failed: {e}')
@@ -517,11 +535,11 @@ class ScreenVideoTrack(VideoStreamTrack):
                     except Exception as exc:
                         dbg(f'cursor removal update failed: {exc}')
             try:
-                video_frame = av.VideoFrame.from_ndarray(frame, format='bgr24')
+                video_frame = VideoFrame.from_ndarray(frame, format='bgr24')
             except Exception:
                 try:
                     rgb = frame[...,::-1]
-                    video_frame = av.VideoFrame.from_ndarray(rgb, format='rgb24')
+                    video_frame = VideoFrame.from_ndarray(rgb, format='rgb24')
                 except Exception:
                     raise
             pts = int(time.time() * 1000)
@@ -601,7 +619,7 @@ class SystemAudioTrack(AudioStreamTrack):
         raw = await asyncio.to_thread(self._audio_queue.get)
         if raw is None or self._stopped:
             raise Exception('track stopped')
-        frame = av.AudioFrame(
+        frame = AudioFrame(
             format='s16',
             layout='stereo' if self.channels == 2 else 'mono',
             samples=self.samples,
@@ -1354,11 +1372,14 @@ if args.password is None:
                 break
             print('Password cannot be empty. Please enter a non-empty password.')
     except KeyboardInterrupt:
-        print('\nPassword is required. Exiting.')
+        error('password input interrupted; password is required. Exiting.')
+        sys.exit(1)
+    except (EOFError, OSError, RuntimeError) as exc:
+        error(f'password input is unavailable: {exc}. Password is required. Exiting.')
         sys.exit(1)
 else:
     if not args.password.strip():
-        print('Error: password cannot be empty.')
+        error('password cannot be empty. Exiting.')
         sys.exit(1)
     server_password = args.password.strip()
 
