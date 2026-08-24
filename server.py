@@ -161,8 +161,216 @@ class BITMAPINFO(ctypes.Structure):
     _fields_ = [("bmiHeader", BITMAPINFOHEADER), ("bmiColors", wintypes.DWORD * 3)]
 
 
-user32 = ctypes.windll.user32
+user32 = ctypes.WinDLL('user32', use_last_error=True)
 gdi32 = ctypes.windll.gdi32
+
+INPUT_KEYBOARD = 1
+KEYEVENTF_UNICODE = 0x0004
+KEYEVENTF_KEYUP = 0x0002
+ULONG_PTR = ctypes.c_uint64 if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_uint32
+
+
+class KEYBDINPUT(ctypes.Structure):
+    _fields_ = [
+        ('wVk', wintypes.WORD),
+        ('wScan', wintypes.WORD),
+        ('dwFlags', wintypes.DWORD),
+        ('time', wintypes.DWORD),
+        ('dwExtraInfo', ULONG_PTR),
+    ]
+
+
+class MOUSEINPUT(ctypes.Structure):
+    _fields_ = [
+        ('dx', wintypes.LONG),
+        ('dy', wintypes.LONG),
+        ('mouseData', wintypes.DWORD),
+        ('dwFlags', wintypes.DWORD),
+        ('time', wintypes.DWORD),
+        ('dwExtraInfo', ULONG_PTR),
+    ]
+
+
+class HARDWAREINPUT(ctypes.Structure):
+    _fields_ = [
+        ('uMsg', wintypes.DWORD),
+        ('wParamL', wintypes.WORD),
+        ('wParamH', wintypes.WORD),
+    ]
+
+
+class INPUT(ctypes.Structure):
+    class _INPUT(ctypes.Union):
+        _fields_ = [
+            ('mi', MOUSEINPUT),
+            ('ki', KEYBDINPUT),
+            ('hi', HARDWAREINPUT),
+        ]
+
+    _anonymous_ = ('input',)
+    _fields_ = [('type', wintypes.DWORD), ('input', _INPUT)]
+
+
+user32.SendInput.argtypes = [
+    wintypes.UINT,
+    ctypes.POINTER(INPUT),
+    ctypes.c_int,
+]
+user32.SendInput.restype = wintypes.UINT
+user32.SetCursorPos.argtypes = [ctypes.c_int, ctypes.c_int]
+user32.SetCursorPos.restype = wintypes.BOOL
+user32.GetSystemMetrics.argtypes = [ctypes.c_int]
+user32.GetSystemMetrics.restype = ctypes.c_int
+
+MOUSEEVENTF_MOVE = 0x0001
+MOUSEEVENTF_LEFTDOWN = 0x0002
+MOUSEEVENTF_LEFTUP = 0x0004
+MOUSEEVENTF_RIGHTDOWN = 0x0008
+MOUSEEVENTF_RIGHTUP = 0x0010
+MOUSEEVENTF_MIDDLEDOWN = 0x0020
+MOUSEEVENTF_MIDDLEUP = 0x0040
+MOUSEEVENTF_WHEEL = 0x0800
+
+
+def _move_mouse(x, y, normalized=False):
+    if os.name != 'nt':
+        return False
+    if x is None or y is None:
+        return False
+
+    width = user32.GetSystemMetrics(0)
+    height = user32.GetSystemMetrics(1)
+    if width <= 0 or height <= 0:
+        return False
+
+    if normalized:
+        x = int(float(x) * width)
+        y = int(float(y) * height)
+    else:
+        x = int(x)
+        y = int(y)
+    x = max(0, min(x, width - 1))
+    y = max(0, min(y, height - 1))
+    return bool(user32.SetCursorPos(x, y))
+
+
+def _send_mouse_input(flags, mouse_data=0):
+    event = INPUT(
+        type=0,
+        mi=MOUSEINPUT(
+            dx=0,
+            dy=0,
+            mouseData=int(mouse_data) & 0xffffffff,
+            dwFlags=flags,
+            time=0,
+            dwExtraInfo=0,
+        ),
+    )
+    sent = user32.SendInput(1, ctypes.byref(event), ctypes.sizeof(INPUT))
+    if sent != 1:
+        dbg(f'mouse SendInput failed: sent={sent}, winerror={ctypes.get_last_error()}')
+        return False
+    return True
+
+
+def _mouse_button(button, pressed):
+    flags = {
+        ('left', True): MOUSEEVENTF_LEFTDOWN,
+        ('left', False): MOUSEEVENTF_LEFTUP,
+        ('right', True): MOUSEEVENTF_RIGHTDOWN,
+        ('right', False): MOUSEEVENTF_RIGHTUP,
+        ('middle', True): MOUSEEVENTF_MIDDLEDOWN,
+        ('middle', False): MOUSEEVENTF_MIDDLEUP,
+    }.get((str(button).lower(), bool(pressed)))
+    return flags is not None and _send_mouse_input(flags)
+
+
+_VIRTUAL_KEYS = {
+    'backspace': 0x08, 'tab': 0x09, 'return': 0x0d, 'enter': 0x0d,
+    'shift': 0x10, 'ctrl': 0x11, 'alt': 0x12, 'pause': 0x13,
+    'capslock': 0x14, 'esc': 0x1b, 'escape': 0x1b, 'space': 0x20,
+    'pageup': 0x21, 'pagedown': 0x22, 'end': 0x23, 'home': 0x24,
+    'left': 0x25, 'up': 0x26, 'right': 0x27, 'down': 0x28,
+    'insert': 0x2d, 'delete': 0x2e, 'win': 0x5b, 'meta': 0x5b,
+    'num0': 0x60, 'num1': 0x61, 'num2': 0x62, 'num3': 0x63,
+    'num4': 0x64, 'num5': 0x65, 'num6': 0x66, 'num7': 0x67,
+    'num8': 0x68, 'num9': 0x69,
+}
+_VIRTUAL_KEYS.update({f'f{index}': 0x6f + index for index in range(1, 13)})
+
+
+def _virtual_key_code(key):
+    key = str(key or '').lower()
+    if len(key) == 1:
+        char = key.upper()
+        if 'A' <= char <= 'Z' or '0' <= char <= '9':
+            return ord(char)
+    return _VIRTUAL_KEYS.get(key)
+
+
+def _send_virtual_key(key, pressed):
+    if os.name != 'nt':
+        return False
+    vk = _virtual_key_code(key)
+    if vk is None:
+        return False
+    flags = 0 if pressed else KEYEVENTF_KEYUP
+    event = INPUT(
+        type=INPUT_KEYBOARD,
+        ki=KEYBDINPUT(
+            wVk=vk,
+            wScan=0,
+            dwFlags=flags,
+            time=0,
+            dwExtraInfo=0,
+        ),
+    )
+    sent = user32.SendInput(1, ctypes.byref(event), ctypes.sizeof(INPUT))
+    if sent != 1:
+        dbg(f'key SendInput failed: sent={sent}, winerror={ctypes.get_last_error()}')
+        return False
+    return True
+
+
+def _send_unicode_input(text):
+    text = str(text)
+    if not text:
+        return True
+
+    events = []
+    encoded = text.encode('utf-16-le')
+    for index in range(0, len(encoded), 2):
+        code_unit = int.from_bytes(encoded[index:index + 2], 'little')
+        events.extend((
+            INPUT(type=INPUT_KEYBOARD, ki=KEYBDINPUT(
+                wVk=0,
+                wScan=code_unit,
+                dwFlags=KEYEVENTF_UNICODE,
+                time=0,
+                dwExtraInfo=0,
+            )),
+            INPUT(type=INPUT_KEYBOARD, ki=KEYBDINPUT(
+                wVk=0,
+                wScan=code_unit,
+                dwFlags=KEYEVENTF_UNICODE | KEYEVENTF_KEYUP,
+                time=0,
+                dwExtraInfo=0,
+            )),
+        ))
+
+    input_array = (INPUT * len(events))(*events)
+    sent = user32.SendInput(
+        len(events),
+        input_array,
+        ctypes.sizeof(INPUT),
+    )
+    if sent != len(events):
+        dbg(
+            f'SendInput failed: sent={sent}/{len(events)}, '
+            f'winerror={ctypes.get_last_error()}'
+        )
+        return False
+    return True
 
 
 def capture_cursor_as_png():
@@ -433,19 +641,19 @@ def main():
 
 
 def relay_heartbeat():
+    global relay_connected
     while True:
         try:
-            global relay_connected
             if shutdown_event.is_set():
                 break
             if relay_connected:
                 relay_socket.emit('server_heartbeat', {'server_id': args.server_id})
-            else:
-                break
         except Exception as exc:
             error(f'[relay] heartbeat failed: {exc}')
             relay_connected = False
-            break
+        if not relay_connected:
+            time.sleep(1)
+            continue
         time.sleep(5)
 
 
@@ -670,7 +878,7 @@ def on_request_session(data):
     dbg(f'request_session browser_sid={browser_sid}')
     if server_password:
         if not req_password or req_password != server_password:
-            info('auth failed for browser ' + str(browser_sid))
+            info('auth failed for browser_sid=' + str(browser_sid))
             if browser_sid:
                 relay_socket.emit('session_denied', {
                     'browser_sid': browser_sid,
@@ -909,6 +1117,7 @@ def on_relay_connect():
             'hostname': socket.gethostname(),
             'address': args.server_id,
         })
+        info(f'server identity: id={args.server_id}\n                        name={socket.gethostname()}')
     except Exception as exc:
         error(f're-register server failed after reconnect: {exc}')
 
@@ -1445,6 +1654,18 @@ def capture_cursor_worker():
                 last_b64 = None
 
 
+def write_unicode_text(text):
+    if not text:
+        return
+    if os.name == 'nt':
+        try:
+            if _send_unicode_input(text):
+                return
+        except Exception as exc:
+            dbg(f'Unicode SendInput failed: {exc}')
+    pyautogui.write(str(text), interval=0)
+
+
 def execute_command(cmd_data, browser_sid=None, ws_settings=None):
     cmd_type = cmd_data.get("type")
     if cmd_type == 'set_capture_params':
@@ -1514,14 +1735,11 @@ def execute_command(cmd_data, browser_sid=None, ws_settings=None):
         x, y = cmd_data.get("x"), cmd_data.get("y")
         normalized = cmd_data.get("normalized", False)
         try:
-            sx, sy = pyautogui.size()
-            if normalized and x is not None and y is not None:
-                tx = max(0, min(int(float(x) * sx), sx - 1))
-                ty = max(0, min(int(float(y) * sy), sy - 1))
-            else:
-                tx = max(0, min(int(x), sx - 1))
-                ty = max(0, min(int(y), sy - 1))
-            pyautogui.moveTo(tx, ty, duration=0)
+            if not _move_mouse(x, y, normalized) and os.name != 'nt':
+                sx, sy = pyautogui.size()
+                tx = int(float(x) * sx) if normalized else int(x)
+                ty = int(float(y) * sy) if normalized else int(y)
+                pyautogui.moveTo(max(0, min(tx, sx - 1)), max(0, min(ty, sy - 1)), duration=0)
         except Exception:
             pass
     elif cmd_type == "mouse_click":
@@ -1529,19 +1747,19 @@ def execute_command(cmd_data, browser_sid=None, ws_settings=None):
         x, y = cmd_data.get("x"), cmd_data.get("y")
         normalized = cmd_data.get("normalized", False)
         try:
-            if x is not None and y is not None:
+            if not _move_mouse(x, y, normalized) and os.name != 'nt' and x is not None and y is not None:
                 sx, sy = pyautogui.size()
-                if normalized:
-                    tx = max(0, min(int(float(x) * sx), sx - 1))
-                    ty = max(0, min(int(float(y) * sy), sy - 1))
-                else:
-                    tx = max(0, min(int(x), sx - 1))
-                    ty = max(0, min(int(y), sy - 1))
-                pyautogui.moveTo(tx, ty, duration=0)
+                tx = int(float(x) * sx) if normalized else int(x)
+                ty = int(float(y) * sy) if normalized else int(y)
+                pyautogui.moveTo(max(0, min(tx, sx - 1)), max(0, min(ty, sy - 1)), duration=0)
         except Exception:
             pass
         try:
-            pyautogui.click(button=button)
+            if os.name == 'nt':
+                _mouse_button(button, True)
+                _mouse_button(button, False)
+            else:
+                pyautogui.click(button=button)
         except Exception:
             pass
     elif cmd_type == "mouse_down":
@@ -1549,19 +1767,18 @@ def execute_command(cmd_data, browser_sid=None, ws_settings=None):
         x, y = cmd_data.get("x"), cmd_data.get("y")
         normalized = cmd_data.get("normalized", False)
         try:
-            if x is not None and y is not None:
+            if not _move_mouse(x, y, normalized) and os.name != 'nt' and x is not None and y is not None:
                 sx, sy = pyautogui.size()
-                if normalized:
-                    tx = max(0, min(int(float(x) * sx), sx - 1))
-                    ty = max(0, min(int(float(y) * sy), sy - 1))
-                else:
-                    tx = max(0, min(int(x), sx - 1))
-                    ty = max(0, min(int(y), sy - 1))
-                pyautogui.moveTo(tx, ty, duration=0)
+                tx = int(float(x) * sx) if normalized else int(x)
+                ty = int(float(y) * sy) if normalized else int(y)
+                pyautogui.moveTo(max(0, min(tx, sx - 1)), max(0, min(ty, sy - 1)), duration=0)
         except Exception:
             pass
         try:
-            pyautogui.mouseDown(button=button)
+            if os.name == 'nt':
+                _mouse_button(button, True)
+            else:
+                pyautogui.mouseDown(button=button)
             mouse_down_state["down"] = True
             mouse_down_state["time"] = time.time()
             mouse_down_state["button"] = button
@@ -1572,19 +1789,18 @@ def execute_command(cmd_data, browser_sid=None, ws_settings=None):
         x, y = cmd_data.get("x"), cmd_data.get("y")
         normalized = cmd_data.get("normalized", False)
         try:
-            if x is not None and y is not None:
+            if not _move_mouse(x, y, normalized) and os.name != 'nt' and x is not None and y is not None:
                 sx, sy = pyautogui.size()
-                if normalized:
-                    tx = max(0, min(int(float(x) * sx), sx - 1))
-                    ty = max(0, min(int(float(y) * sy), sy - 1))
-                else:
-                    tx = max(0, min(int(x), sx - 1))
-                    ty = max(0, min(int(y), sy - 1))
-                pyautogui.moveTo(tx, ty, duration=0)
+                tx = int(float(x) * sx) if normalized else int(x)
+                ty = int(float(y) * sy) if normalized else int(y)
+                pyautogui.moveTo(max(0, min(tx, sx - 1)), max(0, min(ty, sy - 1)), duration=0)
         except Exception:
             pass
         try:
-            pyautogui.mouseUp(button=button)
+            if os.name == 'nt':
+                _mouse_button(button, False)
+            else:
+                pyautogui.mouseUp(button=button)
             mouse_down_state["down"] = False
             mouse_down_state["button"] = None
         except Exception:
@@ -1592,33 +1808,40 @@ def execute_command(cmd_data, browser_sid=None, ws_settings=None):
     elif cmd_type == "mouse_scroll":
         clicks = cmd_data.get("clicks", 1)
         try:
-            pyautogui.scroll(int(clicks))
+            if os.name == 'nt':
+                _send_mouse_input(MOUSEEVENTF_WHEEL, int(clicks) * 120)
+            else:
+                pyautogui.scroll(int(clicks))
         except Exception:
             pass
     elif cmd_type == "key_press":
         key = cmd_data.get("key")
         try:
-            pyautogui.press(key)
+            if not (_send_virtual_key(key, True) and _send_virtual_key(key, False)):
+                if os.name != 'nt':
+                    pyautogui.press(key)
         except Exception:
             pass
     elif cmd_type == "key_down":
         key = cmd_data.get("key")
         try:
-            pyautogui.keyDown(key)
+            if not _send_virtual_key(key, True) and os.name != 'nt':
+                pyautogui.keyDown(key)
         except Exception:
             pass
     elif cmd_type == "key_up":
         key = cmd_data.get("key")
         try:
-            pyautogui.keyUp(key)
+            if not _send_virtual_key(key, False) and os.name != 'nt':
+                pyautogui.keyUp(key)
         except Exception:
             pass
     elif cmd_type == "write":
         text = cmd_data.get("text", "")
         try:
-            pyautogui.write(text, interval=0)
-        except Exception:
-            pass
+            write_unicode_text(text)
+        except Exception as exc:
+            error(f'write command failed: {exc}')
     elif cmd_type in ('set_quality_profile', 'set_stream_setting'):
         settings = None
         if browser_sid:

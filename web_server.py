@@ -26,23 +26,85 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode=ASYNC_MODE, logger
 
 registered_servers = {}
 browser_sessions = {}
+state_lock = threading.RLock()
+active_socket_ids = set()
 SESSION_TIMEOUT = 3600
+PENDING_SESSION_TIMEOUT = 120
 SERVER_TIMEOUT = 60
+SERVER_CLEANUP_INTERVAL = 10
+
+
+def _touch_session(socket_id):
+    with state_lock:
+        session = browser_sessions.get(socket_id)
+        if session:
+            session['last_activity'] = time.time()
+
+
+def _touch_server(server_id):
+    with state_lock:
+        server = registered_servers.get(server_id)
+        if server:
+            server['last_seen'] = time.time()
+
+
+def _disconnect_server(server_id, server_info):
+    server_sid = server_info.get('sid') if server_info else None
+    if not server_sid:
+        return
+
+    with state_lock:
+        session_ids = [
+            socket_id for socket_id, session in browser_sessions.items()
+            if session.get('server_id') == server_id
+        ]
+        for socket_id in session_ids:
+            browser_sessions.pop(socket_id, None)
+
+    for socket_id in session_ids:
+        socketio.emit('session_ended', {'server_id': server_id}, room=socket_id)
+
+    try:
+        socketio.server.disconnect(server_sid, namespace='/')
+    except Exception:
+        pass
+    with state_lock:
+        active_socket_ids.discard(server_sid)
+        registered_servers.pop(server_id, None)
 
 
 def _cleanup_sessions():
     while True:
         try:
             now = time.time()
-            for session_id, session in list(browser_sessions.items()):
-                if now - session.get('created_at', now) > SESSION_TIMEOUT:
-                    browser_sessions.pop(session_id, None)
-            for server_id, server_info in list(registered_servers.items()):
-                if now - server_info.get('last_seen', now) > SERVER_TIMEOUT:
-                    registered_servers.pop(server_id, None)
+            with state_lock:
+                expired_session_ids = []
+                for session_id, session in list(browser_sessions.items()):
+                    if session_id in active_socket_ids:
+                        continue
+                    last_activity = session.get('last_activity', session.get('created_at', now))
+                    timeout = SESSION_TIMEOUT if session.get('authorized') else PENDING_SESSION_TIMEOUT
+                    if now - last_activity > timeout:
+                        expired_session_ids.append(session_id)
+                for session_id in expired_session_ids:
+                    session = browser_sessions.pop(session_id, None)
+                    if session:
+                        server = registered_servers.get(session.get('server_id'))
+                        if server and server.get('sid'):
+                            socketio.emit('end_session', {
+                                'browser_sid': session_id,
+                                'server_id': session.get('server_id'),
+                            }, room=server['sid'])
+
+                expired_servers = []
+                for server_id, server_info in list(registered_servers.items()):
+                    if now - server_info.get('last_seen', now) > SERVER_TIMEOUT:
+                        expired_servers.append((server_id, dict(server_info)))
+            for server_id, server_info in expired_servers:
+                _disconnect_server(server_id, server_info)
         except Exception:
             pass
-        time.sleep(10)
+        time.sleep(SERVER_CLEANUP_INTERVAL)
 
 
 def _server_snapshot(server_id, server_info):
@@ -74,12 +136,9 @@ def download_server_file():
 @app.route('/api/discover-servers', methods=['GET'])
 def discover_servers():
     try:
-        return jsonify({
-            'servers': [
-                _server_snapshot(server_id, server_info)
-                for server_id, server_info in registered_servers.items()
-            ]
-        })
+        with state_lock:
+            servers = [_server_snapshot(server_id, server_info) for server_id, server_info in registered_servers.items()]
+        return jsonify({'servers': servers})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -96,22 +155,27 @@ def connect():
     if not password or not str(password).strip():
         return jsonify({'error': 'Password is required'}), 400
 
-    server = registered_servers.get(server_id)
-    if not server or not server.get('sid'):
-        return jsonify({'error': 'Selected server is not available'}), 404
-
-    browser_sessions[socket_id] = {
-        'server_id': server_id,
-        'socket_id': socket_id,
-        'password': password.strip(),
-        'created_at': time.time(),
-    }
+    with state_lock:
+        server = registered_servers.get(server_id)
+        if not server or not server.get('sid'):
+            return jsonify({'error': 'Selected server is not available'}), 404
+        now = time.time()
+        browser_sessions[socket_id] = {
+            'server_id': server_id,
+            'socket_id': socket_id,
+            'password': password.strip(),
+            'created_at': now,
+            'last_activity': now,
+            'authorized': False,
+        }
+        active_socket_ids.add(socket_id)
+        server_sid = server['sid']
 
     socketio.emit('request_session', {
         'browser_sid': socket_id,
         'server_id': server_id,
         'password': password,
-    }, room=server['sid'])
+    }, room=server_sid)
 
     response = {'status': 'connected'}
     if server.get('direct_host') and server.get('direct_port'):
@@ -124,10 +188,12 @@ def connect():
 def api_disconnect():
     data = request.get_json(silent=True) or {}
     socket_id = data.get('socket_id')
-    if socket_id in browser_sessions:
-        session = browser_sessions.pop(socket_id)
+    with state_lock:
+        active_socket_ids.discard(socket_id)
+        session = browser_sessions.pop(socket_id, None)
+        server = registered_servers.get(session.get('server_id')) if session else None
+    if session:
         server_id = session.get('server_id')
-        server = registered_servers.get(server_id)
         if server and server.get('sid'):
             socketio.emit('end_session', {'browser_sid': socket_id, 'server_id': server_id}, room=server['sid'])
     return jsonify({'status': 'disconnected'})
@@ -135,6 +201,8 @@ def api_disconnect():
 
 @socketio.on('connect')
 def handle_socket_connect():
+    with state_lock:
+        active_socket_ids.add(request.sid)
     return None
 
 
@@ -144,27 +212,29 @@ def handle_register_server(data):
 
     server_id = data.get('server_id') or f"server-{request.sid[:8]}"
     print(f'[web_server] register_server {server_id} sid={request.sid}')
-    existing = registered_servers.get(server_id)
-    if existing and existing.get('sid') != request.sid and time.time() - existing.get('last_seen', 0) < SERVER_TIMEOUT:
-        return
+    with state_lock:
+        existing = registered_servers.get(server_id)
+        if existing and existing.get('sid') != request.sid and time.time() - existing.get('last_seen', 0) < SERVER_TIMEOUT:
+            return
 
-    registered_servers[server_id] = {
-        'sid': request.sid,
-        'name': data.get('name', server_id),
-        'hostname': data.get('hostname', socket.gethostname()),
-        'address': data.get('address', server_id),
-        'direct_host': data.get('direct_host'),
-        'direct_port': data.get('direct_port'),
-        'status': 'online',
-        'last_seen': time.time(),
-    }
+        registered_servers[server_id] = {
+            'sid': request.sid,
+            'name': data.get('name', server_id),
+            'hostname': data.get('hostname', socket.gethostname()),
+            'address': data.get('address', server_id),
+            'direct_host': data.get('direct_host'),
+            'direct_port': data.get('direct_port'),
+            'status': 'online',
+            'last_seen': time.time(),
+        }
 
 
 @socketio.on('server_heartbeat')
 def handle_server_heartbeat(data):
     server_id = (data or {}).get('server_id')
-    if server_id in registered_servers:
-        registered_servers[server_id]['last_seen'] = time.time()
+    if request.sid != registered_servers.get(server_id, {}).get('sid'):
+        return
+    _touch_server(server_id)
 
 
 @socketio.on('webrtc_offer')
@@ -174,12 +244,14 @@ def handle_webrtc_offer(data):
     print(f'[web_server] webrtc_offer browser_sid={browser_sid} server_id={data.get("server_id")}')
     if not browser_sid:
         return
-    session = browser_sessions.get(browser_sid)
-    if not session:
-        print('[web_server] no browser session for offer', browser_sid)
-        return
-    server_id = session.get('server_id')
-    server = registered_servers.get(server_id)
+    with state_lock:
+        session = browser_sessions.get(browser_sid)
+        if not session:
+            print('[web_server] no browser session for offer', browser_sid)
+            return
+        session['last_activity'] = time.time()
+        server_id = session.get('server_id')
+        server = registered_servers.get(server_id)
     if not server or not server.get('sid'):
         print('[web_server] no registered server for offer', server_id)
         return
@@ -193,6 +265,7 @@ def handle_webrtc_answer(data):
     browser_sid = data.get('browser_sid')
     if not browser_sid:
         return
+    _touch_session(browser_sid)
     socketio.emit('webrtc_answer', data, room=browser_sid)
 
 
@@ -205,15 +278,18 @@ def handle_webrtc_candidate(data):
     target = (data.get('target') or 'browser').lower()
     print(f'[web_server] webrtc_candidate browser_sid={browser_sid} target={target}')
     if target == 'server':
-        session = browser_sessions.get(browser_sid)
-        if not session:
-            print('[web_server] no browser session for candidate', browser_sid)
-            return
-        server_id = session.get('server_id')
-        server = registered_servers.get(server_id)
+        with state_lock:
+            session = browser_sessions.get(browser_sid)
+            if not session:
+                print('[web_server] no browser session for candidate', browser_sid)
+                return
+            session['last_activity'] = time.time()
+            server_id = session.get('server_id')
+            server = registered_servers.get(server_id)
         if server and server.get('sid'):
             socketio.emit('webrtc_candidate', data, room=server['sid'])
         return
+    _touch_session(browser_sid)
     socketio.emit('webrtc_candidate', data, room=browser_sid)
 
 
@@ -223,11 +299,11 @@ def handle_session_ready_from_server(data):
     browser_sid = data.get('browser_sid')
     if not browser_sid:
         return
-    try:
-        if browser_sid in browser_sessions:
-            browser_sessions[browser_sid]['authorized'] = True
-    except Exception:
-        pass
+    with state_lock:
+        session = browser_sessions.get(browser_sid)
+        if session:
+            session['authorized'] = True
+            session['last_activity'] = time.time()
     socketio.emit('session_ready', {'server_id': data.get('server_id')}, room=browser_sid)
 
 
@@ -237,28 +313,36 @@ def handle_session_denied_from_server(data):
     browser_sid = data.get('browser_sid')
     if not browser_sid:
         return
-    try:
-        if browser_sid in browser_sessions:
-            browser_sessions[browser_sid].pop('authorized', None)
-    except Exception:
-        pass
-    socketio.emit('session_denied', {'server_id': data.get('server_id'), 'reason': data.get('reason')}, room=browser_sid)
+    with state_lock:
+        session = browser_sessions.get(browser_sid)
+        if session:
+            session['authorized'] = False
+            session['last_activity'] = time.time()
+    socketio.emit('session_denied', {
+        'browser_sid': browser_sid,
+        'server_id': data.get('server_id'),
+        'reason': data.get('reason'),
+    }, room=browser_sid)
 
 
 @socketio.on('disconnect')
 def handle_socket_disconnect():
     browser_sid = request.sid
-    if browser_sid in browser_sessions:
-        session = browser_sessions.pop(browser_sid)
-        server_id = session.get('server_id')
-        server = registered_servers.get(server_id)
-        if server and server.get('sid'):
-            socketio.emit('end_session', {'browser_sid': browser_sid, 'server_id': server_id}, room=server['sid'])
+    with state_lock:
+        active_socket_ids.discard(browser_sid)
+        session = browser_sessions.pop(browser_sid, None)
+        server_id = session.get('server_id') if session else None
+        server = registered_servers.get(server_id) if server_id else None
+        server_id_for_disconnect = next(
+            (server_id for server_id, server_info in registered_servers.items()
+             if server_info.get('sid') == browser_sid),
+            None,
+        )
+        if server_id_for_disconnect:
+            registered_servers.pop(server_id_for_disconnect, None)
 
-    for server_id, server_info in list(registered_servers.items()):
-        if server_info.get('sid') == browser_sid:
-            del registered_servers[server_id]
-            break
+    if session and server and server.get('sid'):
+        socketio.emit('end_session', {'browser_sid': browser_sid, 'server_id': server_id}, room=server['sid'])
 
 
 if __name__ == '__main__':

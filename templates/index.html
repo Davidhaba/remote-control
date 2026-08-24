@@ -320,6 +320,7 @@
         let remoteDescriptionSet = false;
 
         let lastMouseX = 0, lastMouseY = 0;
+        let touchpadCursorInitialized = false;
         let mouseSetupDone = false;
         const TAP_MAX_MS = 250;
         const TAP_MOVE_THRESHOLD = 10;
@@ -580,10 +581,12 @@
                     data.servers.forEach(server => {
                         const item = document.createElement('div');
                         item.className = 'server-item';
-                        item.innerHTML = `<span>${server.hostname || 'Unknown'}</span><br><span class="muted-text small">${server.address}</span>`;
-                        item.onclick = () => connectToServer(server.address, item);
+                        const serverName = server.name || server.hostname || 'Unknown';
+                        const serverId = server.server_id || server.address || 'Unknown';
+                        item.innerHTML = `<span>${serverName}</span><br><span class="muted-text small">ID: ${serverId}</span>`;
+                        item.onclick = () => connectToServer(serverId, item);
                         serverList.appendChild(item);
-                        __serverItems.push({ element: item, text: ((server.hostname || '') + ' ' + server.address + ' ' + (server.ip || '')).toLowerCase() });
+                        __serverItems.push({ element: item, text: `${serverName} ${serverId} ${server.hostname || ''} ${server.address || ''}`.toLowerCase() });
                     });
                     statusDiv.className = 'status';
                     statusDiv.textContent = 'Servers found';
@@ -878,7 +881,6 @@
             const keyboardInput = document.getElementById('keyboardInput');
             if (keyboardInput) {
                 keyboardInput.value = '';
-                delete keyboardInput.dataset.setup;
             }
             resetControlPanels();
         }
@@ -993,6 +995,7 @@
                             canvas.width = screenWidth;
                             canvas.height = screenHeight;
                         }
+                        window.dispatchEvent(new Event('resize'));
                         console.log('[browser] remoteVideo loadedmetadata', remoteVideo.videoWidth, remoteVideo.videoHeight);
                     };
                     remoteVideo.play().catch(() => {});
@@ -1431,7 +1434,9 @@
         socket.on('session_denied', (data) => {
             try {
                 const statusDiv = document.getElementById('status');
-                if (data && data.server_id && selectedServer && data.server_id === selectedServer) {
+                const isThisBrowser = data && data.browser_sid === socket.id;
+                const isThisServer = data && data.server_id && selectedServer && data.server_id === selectedServer;
+                if (isThisBrowser || isThisServer) {
                     statusDiv.className = 'status error';
                     statusDiv.textContent = 'Authentication failed';
                     selectedServer = null;
@@ -1439,6 +1444,18 @@
             } catch (e) {
                 console.error(e);
             }
+        });
+
+        socket.on('session_ended', async (data) => {
+            if (!data || !selectedServer || data.server_id !== selectedServer) return;
+            await closeWebRTCConnection();
+            isConnected = false;
+            const statusDiv = document.getElementById('status');
+            if (statusDiv) {
+                statusDiv.className = 'status error';
+                statusDiv.textContent = 'Server connection lost';
+            }
+            showConnectionOverlay('Server connection lost', 'The server is reconnecting. Please retry shortly.');
         });
 
         function updateCursorDisplay() {
@@ -1473,6 +1490,7 @@
         function centerRemoteCursor() {
             lastMouseX = Math.round(screenWidth / 2);
             lastMouseY = Math.round(screenHeight / 2);
+            touchpadCursorInitialized = true;
             sendCommand({
                 type: 'mouse_move',
                 x: lastMouseX / screenWidth,
@@ -1606,15 +1624,17 @@
                 const video = document.getElementById('remoteVideo');
                 const videoWidth = video?.videoWidth || screenWidth;
                 const videoHeight = video?.videoHeight || screenHeight;
-                if (!areaRect.width || !areaRect.height || !videoWidth || !videoHeight) return null;
-                const scale = Math.min(areaRect.width / videoWidth, areaRect.height / videoHeight);
+                const areaWidth = screenArea.clientWidth || areaRect.width;
+                const areaHeight = screenArea.clientHeight || areaRect.height;
+                if (!areaWidth || !areaHeight || !videoWidth || !videoHeight) return null;
+                const scale = Math.min(areaWidth / videoWidth, areaHeight / videoHeight);
                 return {
                     width: videoWidth * scale,
                     height: videoHeight * scale,
-                    left: (areaRect.width - videoWidth * scale) / 2,
-                    top: (areaRect.height - videoHeight * scale) / 2,
-                    areaWidth: areaRect.width,
-                    areaHeight: areaRect.height
+                    left: (areaWidth - videoWidth * scale) / 2,
+                    top: (areaHeight - videoHeight * scale) / 2,
+                    areaWidth,
+                    areaHeight
                 };
             };
             const applyScreenTransform = () => {
@@ -1645,10 +1665,13 @@
             const ensureCursorVisible = () => {
                 const media = getMediaLayout();
                 if (!media) return;
+                const video = document.getElementById('remoteVideo');
+                const contentWidth = video?.videoWidth || screenWidth;
+                const contentHeight = video?.videoHeight || screenHeight;
                 screenOffsetX = media.areaWidth / 2
-                    - (media.left + lastMouseX * media.width / Math.max(1, screenWidth)) * screenZoom;
+                    - (media.left + lastMouseX * media.width / Math.max(1, contentWidth)) * screenZoom;
                 screenOffsetY = media.areaHeight / 2
-                    - (media.top + lastMouseY * media.height / Math.max(1, screenHeight)) * screenZoom;
+                    - (media.top + lastMouseY * media.height / Math.max(1, contentHeight)) * screenZoom;
                 applyScreenTransform();
             };
             window.addEventListener('resize', () => {
@@ -1656,6 +1679,13 @@
                 if (touchInputMode === 'touchpad') ensureCursorVisible();
                 updateCursorDisplay();
             });
+            if (window.visualViewport) {
+                visualViewport.addEventListener('resize', () => {
+                    applyScreenTransform();
+                    if (touchInputMode === 'touchpad') ensureCursorVisible();
+                    updateCursorDisplay();
+                });
+            }
             const pinchDistance = (touches) => {
                 const first = touches[0];
                 const second = touches[1];
@@ -1674,6 +1704,12 @@
                 screenZoom = nextZoom;
                 screenOffsetX = pinchGesture.startOffsetX + (midpointX - pinchGesture.startMidpointX) - localX * (screenZoom - pinchGesture.startZoom);
                 screenOffsetY = pinchGesture.startOffsetY + (midpointY - pinchGesture.startMidpointY) - localY * (screenZoom - pinchGesture.startZoom);
+                pinchGesture.moved = pinchGesture.moved
+                    || Math.abs(pinchDistance(event.touches) - pinchGesture.startDistance) > TAP_MOVE_THRESHOLD
+                    || Math.hypot(
+                        midpointX - pinchGesture.startMidpointX,
+                        midpointY - pinchGesture.startMidpointY
+                    ) > TAP_MOVE_THRESHOLD;
                 applyScreenTransform();
                 updateCursorDisplay();
                 if (touchInputMode === 'touchpad') ensureCursorVisible();
@@ -1729,6 +1765,9 @@
                     touchGesture = null;
                     pinchGesture = {
                         startDistance: Math.max(1, pinchDistance(event.touches)),
+                        startedAt: performance.now(),
+                        moved: false,
+                        twoFingerTap: true,
                         startZoom: screenZoom,
                         startOffsetX: screenOffsetX,
                         startOffsetY: screenOffsetY,
@@ -1747,9 +1786,10 @@
                 const coords = touchpad
                     ? { screenX: touch.clientX, screenY: touch.clientY }
                     : coordsFromClient(touch.clientX, touch.clientY);
-                if (touchpad && !lastMouseX && !lastMouseY) {
+                if (touchpad && !touchpadCursorInitialized) {
                     lastMouseX = Math.round(screenWidth / 2);
                     lastMouseY = Math.round(screenHeight / 2);
+                    touchpadCursorInitialized = true;
                 }
                 let button = 'left';
                 let buttonDown = false;
@@ -1825,7 +1865,21 @@
             if (screenArea) screenArea.addEventListener('touchend', (event) => {
                 if (pinchGesture) {
                     event.preventDefault();
-                    if (event.touches.length < 2) pinchGesture = null;
+                    if (event.touches.length === 0) {
+                        const gesture = pinchGesture;
+                        pinchGesture = null;
+                        if (gesture.twoFingerTap
+                            && !gesture.moved
+                            && performance.now() - gesture.startedAt <= TAP_MAX_MS) {
+                            sendCommand({
+                                type: 'mouse_click',
+                                button: 'right',
+                                x: lastMouseX / Math.max(1, screenWidth),
+                                y: lastMouseY / Math.max(1, screenHeight),
+                                normalized: true
+                            });
+                        }
+                    }
                     return;
                 }
                 finishTouchGesture(event);
