@@ -71,7 +71,6 @@ except Exception:
     pystray = None
     _startup_message("pystray module not found. System tray icon will be disabled.")
 
-
 VERBOSE = False
 LOG_DIR = Path(__file__).resolve().parent / 'logs'
 LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -200,6 +199,7 @@ class HARDWAREINPUT(ctypes.Structure):
 
 
 class INPUT(ctypes.Structure):
+
     class _INPUT(ctypes.Union):
         _fields_ = [
             ('mi', MOUSEINPUT),
@@ -1915,6 +1915,5 @@ if os.name == 'nt':
         kernel32.SetConsoleCtrlHandler(console_handler, True)
     except Exception:
         pass
-
 
 main()

@@ -5,7 +5,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Remote Control</title>
-    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap"
+        rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
@@ -16,13 +17,14 @@
 
 <body>
 
+    <header class="connect-header">
+        <div class="app-title"><span class="brand-mark"><i class="fa fa-crosshairs"></i></span><span
+                class="app-title-text">Remote Control</span></div>
+        <button type="button" class="btn btn-ghost setup-btn" onclick="showSetupModal()">
+            <i class="fa fa-book"></i><span>How to start</span>
+        </button>
+    </header>
     <div id="view-connect">
-        <header class="connect-header">
-            <div class="app-title"><span class="brand-mark"><i class="fa fa-crosshairs"></i></span> Remote Control</div>
-            <button type="button" class="btn btn-ghost setup-btn" onclick="showSetupModal()">
-                <i class="fa fa-book"></i><span>How to start</span>
-            </button>
-        </header>
 
         <main class="connect-workspace">
             <aside class="connect-aside">
@@ -38,66 +40,81 @@
             <section class="card sidebar connect-card">
                 <div class="tabs" role="tablist" aria-label="Computer list">
                     <span class="tab-indicator" aria-hidden="true"></span>
-                    <button type="button" role="tab" id="desktop-tab" class="tab-btn active" data-tab="desktop" aria-controls="tab-desktop" aria-selected="true" onclick="switchTab('desktop', event)"><i class="fa fa-desktop"></i> Desktop</button>
-                    <button type="button" role="tab" id="recent-tab" class="tab-btn" data-tab="recent" aria-controls="tab-recent" aria-selected="false" onclick="switchTab('recent', event)"><i class="fa fa-history"></i> Recent</button>
+                    <button type="button" role="tab" id="desktop-tab" class="tab-btn active" data-tab="desktop"
+                        aria-controls="tab-desktop" aria-selected="true" onclick="switchTab('desktop', event)"><i
+                            class="fa fa-laptop"></i> Desktop</button>
+                    <button type="button" role="tab" id="recent-tab" class="tab-btn" data-tab="recent"
+                        aria-controls="tab-recent" aria-selected="false" onclick="switchTab('recent', event)"><i
+                            class="fa fa-clock-o"></i> Recent</button>
                 </div>
 
                 <div class="tab-stage">
-                    <div id="tab-desktop" class="tab-content active" role="tabpanel" aria-labelledby="desktop-tab" aria-hidden="false">
-                    <div class="card-header">
-                        <div>
-                            <div class="section-kicker">DESKTOP HOSTS</div>
-                            <div class="card-title">Available servers</div>
-                            <div class="card-subtitle">Select a host to open a remote session.</div>
+                    <div id="tab-desktop" class="tab-content active" role="tabpanel" aria-labelledby="desktop-tab"
+                        aria-hidden="false">
+                        <div class="card-header">
+                            <div>
+                                <div class="section-kicker">DESKTOP HOSTS</div>
+                                <div class="card-title">Available servers</div>
+                                <div class="card-subtitle">Select a host to open a remote session.</div>
+                            </div>
+                            <div class="card-pill">LAN</div>
                         </div>
-                        <div class="card-pill">LAN</div>
-                    </div>
 
-                    <div class="controls">
-                        <button class="btn btn-primary" onclick="discoverServers()"><i class="fa fa-refresh"></i> Scan for hosts</button>
-                    </div>
-
-                    <div class="search">
-                        <i class="fa fa-search search-icon"></i>
-                        <input id="serverSearch" placeholder="Search servers" oninput="filterServers()">
-                        <button class="btn btn-ghost clear-search" aria-label="Clear search"
-                            onclick="document.getElementById('serverSearch').value='';filterServers();">&times;</button>
-                    </div>
-
-                    <div id="serverList" class="server-list"></div>
-                    <p class="info-text subdued">Only machines currently visible to the relay are shown.</p>
-                    </div>
-
-                    <div id="tab-recent" class="tab-content" role="tabpanel" aria-labelledby="recent-tab" aria-hidden="true">
-                    <div class="card-header">
-                        <div>
-                            <div class="section-kicker">RECENT CONNECTIONS</div>
-                            <div class="card-title">Your computers</div>
-                            <div class="card-subtitle">Reconnect to a computer you used recently.</div>
+                        <div class="controls">
+                            <button class="btn btn-primary" onclick="discoverServers()"><i class="fa fa-refresh"></i>
+                                Scan for hosts</button>
                         </div>
-                        <div class="card-pill">HISTORY</div>
+
+                        <div class="search">
+                            <i class="fa fa-search search-icon"></i>
+                            <input id="serverSearch" placeholder="Search servers" oninput="filterServers()">
+                            <button class="btn btn-ghost clear-search" aria-label="Clear search"
+                                onclick="document.getElementById('serverSearch').value='';filterServers();">&times;</button>
+                        </div>
+
+                        <div class="server-list-wrap">
+                            <div id="serverList" class="server-list"></div>
+                            <div id="serverListMessage" class="list-message-overlay" aria-live="polite"></div>
+                        </div>
+                        <p class="info-text subdued">Only machines currently visible to the relay are shown.</p>
                     </div>
 
-                    <div class="controls">
-                        <button class="btn btn-primary" onclick="renderRecentServers()"><i class="fa fa-refresh"></i> Refresh history</button>
-                    </div>
+                    <div id="tab-recent" class="tab-content" role="tabpanel" aria-labelledby="recent-tab"
+                        aria-hidden="true">
+                        <div class="card-header">
+                            <div>
+                                <div class="section-kicker">RECENT CONNECTIONS</div>
+                                <div class="card-title">Your computers</div>
+                                <div class="card-subtitle">Reconnect to a computer you used recently.</div>
+                            </div>
+                            <div class="card-pill">HISTORY</div>
+                        </div>
 
-                    <div class="search">
-                        <i class="fa fa-search search-icon"></i>
-                        <input id="recentSearch" placeholder="Search computers" oninput="filterRecentServers()">
-                        <button class="btn btn-ghost clear-search" aria-label="Clear search"
-                            onclick="document.getElementById('recentSearch').value='';filterRecentServers();">&times;</button>
-                    </div>
+                        <div class="controls">
+                            <button class="btn btn-primary" onclick="renderRecentServers()"><i
+                                    class="fa fa-refresh"></i> Refresh history</button>
+                        </div>
 
-                    <div id="recentList" class="server-list"></div>
-                    <p class="info-text subdued">Computers remain here after they go offline.</p>
+                        <div class="search">
+                            <i class="fa fa-search search-icon"></i>
+                            <input id="recentSearch" placeholder="Search computers" oninput="filterRecentServers()">
+                            <button class="btn btn-ghost clear-search" aria-label="Clear search"
+                                onclick="document.getElementById('recentSearch').value='';filterRecentServers();">&times;</button>
+                        </div>
+
+                        <div class="server-list-wrap">
+                            <div id="recentList" class="server-list"></div>
+                            <div id="recentListMessage" class="list-message-overlay" aria-live="polite"></div>
+                        </div>
+                        <p class="info-text subdued">Computers remain here after they go offline.</p>
                     </div>
                 </div>
 
-                <div id="status" class="status">Disconnected</div>
             </section>
         </main>
     </div>
+
+    <div id="appNotice" class="app-notice" role="status" aria-live="polite"></div>
 
     <div id="view-screen" class="view-screen">
         <div id="connectionOverlay" class="connection-overlay" style="display:none;">
@@ -151,7 +168,8 @@
                 <div class="control-title"><i class="fa fa-image"></i> Quality profile</div>
                 <div class="setting-options" role="group" aria-label="Quality profile">
                     <button class="setting-option" data-quality="low" onclick="setQualityProfile('low')">Low</button>
-                    <button class="setting-option active" data-quality="medium" onclick="setQualityProfile('medium')">Medium</button>
+                    <button class="setting-option active" data-quality="medium"
+                        onclick="setQualityProfile('medium')">Medium</button>
                     <button class="setting-option" data-quality="high" onclick="setQualityProfile('high')">High</button>
                 </div>
             </div>
@@ -171,10 +189,14 @@
             <div class="mobile-control-mode" id="mobileControlMode" hidden>
                 <div class="control-title"><i class="fa fa-hand-o-up"></i> Touch input</div>
                 <div class="mode-switch" role="group" aria-label="Touch input mode">
-                    <button type="button" class="mode-option active" data-mode="touchpad" onclick="setTouchInputMode('touchpad')"><i class="fa fa-arrows"></i><span>Touchpad</span></button>
-                    <button type="button" class="mode-option" data-mode="touch" onclick="setTouchInputMode('touch')"><i class="fa fa-hand-o-up"></i><span>Touch control</span></button>
+                    <button type="button" class="mode-option active" data-mode="touchpad"
+                        onclick="setTouchInputMode('touchpad')"><i
+                            class="fa fa-arrows"></i><span>Touchpad</span></button>
+                    <button type="button" class="mode-option" data-mode="touch" onclick="setTouchInputMode('touch')"><i
+                            class="fa fa-hand-o-up"></i><span>Touch control</span></button>
                 </div>
-                <div class="mode-description" id="touchModeDescription">Tap and swipe directly on the remote screen.</div>
+                <div class="mode-description" id="touchModeDescription">Tap and swipe directly on the remote screen.
+                </div>
             </div>
             <div class="panel-toolbar">
                 <button class="btn btn-ghost active" data-tab="mouse"
@@ -245,9 +267,11 @@
                 <label for="passwordInput">Password</label>
                 <input id="passwordInput" type="password" autocomplete="current-password" placeholder="Server password"
                     required>
+                <div id="passwordError" class="password-error" role="alert" aria-live="polite"></div>
                 <div class="modal-actions">
-                    <button type="button" class="btn btn-ghost" onclick="cancelPasswordModal()">Cancel</button>
-                    <button type="submit" class="btn btn-primary">Connect</button>
+                    <button type="button" id="passwordCancelButton" class="btn btn-ghost"
+                        onclick="cancelPasswordModal()">Cancel</button>
+                    <button type="submit" id="passwordConnectButton" class="btn btn-primary">Connect</button>
                 </div>
             </form>
         </div>
@@ -261,7 +285,8 @@
                     <div class="section-kicker">QUICK START</div>
                     <h2 id="setupModalTitle">Run the server</h2>
                 </div>
-                <button type="button" class="modal-close" aria-label="Close instructions" onclick="hideSetupModal()">&times;</button>
+                <button type="button" class="modal-close" aria-label="Close instructions"
+                    onclick="hideSetupModal()">&times;</button>
             </div>
 
             <div class="setup-steps">
@@ -271,25 +296,33 @@
                         <strong>Download the server</strong>
                         <p>Save the server application on the computer you want to control.</p>
                         <div class="setup-step-downloads">
-                            <a class="btn btn-primary" href="/download/RemoteControlServer.exe"><i class="fa fa-download"></i> RemoteControlServer.exe</a>
+                            <a class="btn btn-primary" href="/download/RemoteControlServer.exe"><i
+                                    class="fa fa-download"></i> RemoteControlServer.exe</a>
                         </div>
                     </div>
                 </div>
                 <div class="setup-step">
                     <span class="setup-step-number">02</span>
-                    <div><strong>Start the server</strong><p>Open the downloaded file. Windows may ask you to confirm that you want to run it.</p></div>
+                    <div><strong>Start the server</strong>
+                        <p>Open the downloaded file. Windows may ask you to confirm that you want to run it.</p>
+                    </div>
                 </div>
                 <div class="setup-step">
                     <span class="setup-step-number">03</span>
-                    <div><strong>Allow access</strong><p>If Windows Firewall asks, allow network access so the server can connect to the relay.</p></div>
+                    <div><strong>Allow access</strong>
+                        <p>If Windows Firewall asks, allow network access so the server can connect to the relay.</p>
+                    </div>
                 </div>
                 <div class="setup-step">
                     <span class="setup-step-number">04</span>
-                    <div><strong>Connect here</strong><p>Return to this page, choose Desktop, scan for hosts, and select your computer.</p></div>
+                    <div><strong>Connect here</strong>
+                        <p>Return to this page, choose Desktop, scan for hosts, and select your computer.</p>
+                    </div>
                 </div>
             </div>
 
-            <div class="setup-note"><i class="fa fa-info-circle"></i> Keep this page and the server terminal running during the session.</div>
+            <div class="setup-note"><i class="fa fa-info-circle"></i> Keep this page and the server terminal running
+                during the session.</div>
             <div class="modal-actions setup-actions">
                 <button type="button" class="btn btn-ghost" onclick="hideSetupModal()">Close</button>
             </div>
@@ -307,6 +340,7 @@
 
         let isConnected = false;
         let selectedServer = null;
+        let selectedServerName = null;
         let tabSwitchTimer = null;
         let viewSwitchTimer = null;
         let keyboardTabSwitchTimer = null;
@@ -329,6 +363,71 @@
 
         const __serverItems = [];
         const __recentItems = [];
+
+        let noticeTimer = null;
+        let noticeHideTimer = null;
+
+        function showNotice(message, type = 'info') {
+            const notice = document.getElementById('appNotice');
+            if (!notice) return;
+            clearTimeout(noticeTimer);
+            clearTimeout(noticeHideTimer);
+            if (!message) {
+                notice.className = 'app-notice';
+                noticeHideTimer = setTimeout(() => {
+                    notice.textContent = '';
+                }, 180);
+                return;
+            }
+            notice.className = `app-notice ${type}`;
+            notice.textContent = message;
+            if (type !== 'loading') {
+                noticeTimer = setTimeout(() => {
+                    notice.className = 'app-notice';
+                    noticeHideTimer = setTimeout(() => {
+                        notice.textContent = '';
+                    }, 180);
+                }, 3200);
+            }
+        }
+
+        function getStatusElement() {
+            const state = { _className: '', _textContent: '' };
+            Object.defineProperties(state, {
+                className: {
+                    set(value) { state._className = value || ''; },
+                    get() { return state._className; }
+                },
+                textContent: {
+                    set(value) {
+                        state._textContent = value || '';
+                        const type = state._className.includes('error') ? 'error'
+                            : state._className.includes('loading') ? 'loading' : 'info';
+                        if (type !== 'info') {
+                            showNotice(state._textContent, type);
+                        }
+                    },
+                    get() { return state._textContent; }
+                }
+            });
+            return state;
+        }
+
+        function setListMessage(listId, message, type = 'info') {
+            const list = document.getElementById(listId);
+            if (!list) return;
+            const messageElement = document.getElementById(`${listId}Message`);
+            if (!messageElement) return;
+            messageElement.className = `list-message-overlay ${type}`;
+            messageElement.innerHTML = `<i class="fa ${type === 'loading' ? 'fa-spinner fa-spin' : type === 'error' ? 'fa-exclamation-circle' : 'fa-info-circle'}"></i><span>${message}</span>`;
+        }
+
+        function clearListMessage(listId) {
+            const messageElement = document.getElementById(`${listId}Message`);
+            if (!messageElement) return;
+            messageElement.className = 'list-message-overlay';
+            messageElement.textContent = '';
+        }
 
         let remoteCursorImg = null;
         let cursorHotspotX = 0, cursorHotspotY = 0;
@@ -562,20 +661,17 @@
         }
 
         function discoverServers() {
-            const statusDiv = document.getElementById('status');
-            statusDiv.className = 'status loading';
-            statusDiv.textContent = 'Searching...';
+            setListMessage('serverList', 'Searching for servers...', 'loading');
 
             fetch('/api/discover-servers')
                 .then(res => res.json())
                 .then(data => {
                     const serverList = document.getElementById('serverList');
                     serverList.innerHTML = '';
+                    clearListMessage('serverList');
                     __serverItems.length = 0;
                     if (!data.servers || data.servers.length === 0) {
-                        serverList.innerHTML = '<p class="muted-text">No servers found</p>';
-                        statusDiv.className = 'status';
-                        statusDiv.textContent = 'No servers';
+                        setListMessage('serverList', 'No servers found');
                         return;
                     }
                     data.servers.forEach(server => {
@@ -584,17 +680,21 @@
                         const serverName = server.name || server.hostname || 'Unknown';
                         const serverId = server.server_id || server.address || 'Unknown';
                         item.innerHTML = `<span>${serverName}</span><br><span class="muted-text small">ID: ${serverId}</span>`;
-                        item.onclick = () => connectToServer(serverId, item);
+                        item.onclick = () => showPasswordModal(serverId, item, serverName);
                         serverList.appendChild(item);
                         __serverItems.push({ element: item, text: `${serverName} ${serverId} ${server.hostname || ''} ${server.address || ''}`.toLowerCase() });
                     });
-                    statusDiv.className = 'status';
-                    statusDiv.textContent = 'Servers found';
+                    if (document.getElementById('serverSearch')?.value?.trim()) {
+                        filterServers();
+                    }
                 })
                 .catch(() => {
-                    const statusDiv = document.getElementById('status');
+                    const statusDiv = getStatusElement();
                     statusDiv.className = 'status error';
                     statusDiv.textContent = 'Search failed';
+                    const serverList = document.getElementById('serverList');
+                    if (__serverItems.length === 0) setListMessage('serverList', 'Search failed', 'error');
+                    else clearListMessage('serverList');
                 });
         }
 
@@ -607,9 +707,10 @@
             }
         }
 
-        function saveRecentServer(address, password, label) {
+        function saveRecentServer(address = null, password = null, label = null) {
+            if (!address || !password) return;
             const recent = getRecentServers().filter(server => server.address !== address);
-            recent.unshift({ address, password, label: label || address, lastConnected: Date.now() });
+            recent.unshift({ address, password, label, lastConnected: Date.now() });
             localStorage.setItem('remoteControl.recentServers', JSON.stringify(recent.slice(0, 20)));
         }
 
@@ -617,54 +718,116 @@
             const recentList = document.getElementById('recentList');
             if (!recentList) return;
             recentList.innerHTML = '';
+            clearListMessage('recentList');
             __recentItems.length = 0;
             const recent = getRecentServers();
             if (!recent.length) {
-                recentList.innerHTML = '<p class="muted-text">No recent computers</p>';
+                setListMessage('recentList', 'No recent computers');
                 return;
             }
             recent.forEach(server => {
                 const item = document.createElement('div');
                 item.className = 'server-item';
-                item.innerHTML = `<span>${server.label}</span><br><span class="muted-text small">${server.address}</span>`;
+                item.innerHTML = `<div><span>${server.label || 'Unknown'}</span><br><span class="muted-text small">ID: ${server.address}</span></div><button type="button" class="recent-delete" title="Remove from history" aria-label="Remove ${server.label || server.address} from history"><i class="fa fa-trash"></i></button>`;
                 item.onclick = () => connectWithStoredPassword(server, item);
+                item.querySelector('.recent-delete').onclick = (event) => deleteRecentServer(server.address, event);
                 recentList.appendChild(item);
-                __recentItems.push({ element: item, text: `${server.label} ${server.address}`.toLowerCase() });
+                __recentItems.push({ element: item, text: `${server.label || 'Unknown'} ${server.address}`.toLowerCase() });
             });
+            if (document.getElementById('recentSearch')?.value?.trim()) {
+                filterRecentServers();
+            }
+        }
+
+        function deleteRecentServer(address, event) {
+            event?.stopPropagation();
+            const recent = getRecentServers().filter(server => server.address && server.address !== null && server.address !== address);
+            try {
+                localStorage.setItem('remoteControl.recentServers', JSON.stringify(recent));
+            } catch { }
+            renderRecentServers();
         }
 
         function connectWithStoredPassword(server, element) {
             document.querySelectorAll('.server-item').forEach(el => el.classList.remove('selected'));
             element.classList.add('selected');
             selectedServer = server.address;
-            connectToSelectedServer(server.password);
+            selectedServerName = server.label || null;
+            connectToServer(server.address, server.password, selectedServerName);
         }
 
         function filterServers() {
             const q = document.getElementById('serverSearch').value.trim().toLowerCase();
             __serverItems.forEach(it => {
-                it.element.style.display = it.text.includes(q) ? '' : 'none';
+                it.element.style.display = (!q || q === '' || it.text.includes(q)) ? '' : 'none';
             });
+            const visibleItems = __serverItems.filter(it => it.element.style.display !== 'none');
+            const serverList = document.getElementById('serverList');
+            if (serverList) {
+                clearListMessage('serverList');
+                if (visibleItems.length === 0 && q.length > 0) {
+                    setListMessage('serverList', 'No matches found');
+                }
+            }
         }
 
         function filterRecentServers() {
             const q = document.getElementById('recentSearch').value.trim().toLowerCase();
             __recentItems.forEach(it => {
-                it.element.style.display = it.text.includes(q) ? '' : 'none';
+                it.element.style.display = (!q || q === '' || it.text.includes(q)) ? '' : 'none';
             });
+            const visibleItems = __recentItems.filter(it => it.element.style.display !== 'none');
+            const recentList = document.getElementById('recentList');
+            if (recentList) {
+                clearListMessage('recentList');
+                if (visibleItems.length === 0 && q.length > 0) {
+                    setListMessage('recentList', 'No matches found');
+                }
+            }
         }
 
-        function showPasswordModal(targetAddress, element) {
-            const statusDiv = document.getElementById('status');
-            statusDiv.className = 'status loading';
-            statusDiv.textContent = 'Awaiting password...';
+        function showPasswordModal(targetAddress, element, serverName = null) {
+            setPasswordModalPending(false);
             document.querySelectorAll('.server-item').forEach(el => el.classList.remove('selected'));
             if (element) element.classList.add('selected');
             selectedServer = targetAddress;
-            document.getElementById('modalServerInfo').textContent = `Connecting to ${targetAddress}`;
+            selectedServerName = serverName;
+            const modalInfo = document.getElementById('modalServerInfo');
+            modalInfo.textContent = `Connecting to ${serverName || targetAddress}`;
+            const passwordError = document.getElementById('passwordError');
+            if (passwordError) passwordError.textContent = '';
             document.getElementById('passwordInput').value = '';
             document.getElementById('passwordModal').classList.add('active');
             document.getElementById('passwordInput').focus();
+        }
+
+        function setPasswordModalPending(pending) {
+            const modal = document.getElementById('passwordModal');
+            const input = document.getElementById('passwordInput');
+            const cancelButton = document.getElementById('passwordCancelButton');
+            const connectButton = document.getElementById('passwordConnectButton');
+            if (!modal || !input || !cancelButton || !connectButton) return;
+
+            modal.classList.toggle('is-pending', pending);
+            input.disabled = pending;
+            cancelButton.disabled = pending;
+            connectButton.disabled = pending;
+            connectButton.innerHTML = pending
+                ? '<i class="fa fa-spinner fa-spin"></i> Connecting...'
+                : 'Connect';
+        }
+
+        function showAuthenticationError() {
+            const passwordInput = document.getElementById('passwordInput');
+            const passwordError = document.getElementById('passwordError');
+            showNotice('', 'info');
+            setPasswordModalPending(false);
+            if (passwordError) passwordError.textContent = 'Authentication failed. Enter the correct server password.';
+            if (passwordInput) {
+                passwordInput.focus();
+                passwordInput.select();
+            }
+            document.getElementById('passwordModal')?.classList.add('active');
         }
 
         function showSetupModal() {
@@ -678,14 +841,13 @@
 
         function hidePasswordModal(event) {
             if (event && event.target !== event.currentTarget) return;
+            if (document.getElementById('passwordModal')?.classList.contains('is-pending')) return;
             document.getElementById('passwordModal').classList.remove('active');
         }
 
         function cancelPasswordModal() {
+            if (document.getElementById('passwordModal')?.classList.contains('is-pending')) return;
             hidePasswordModal();
-            const statusDiv = document.getElementById('status');
-            statusDiv.className = 'status';
-            statusDiv.textContent = 'Cancelled';
             selectedServer = null;
         }
 
@@ -697,13 +859,14 @@
                 passwordInput.focus();
                 return;
             }
-            hidePasswordModal();
-            connectToSelectedServer(trimmedPassword);
+            setPasswordModalPending(true);
+            connectToServer(selectedServer, trimmedPassword, selectedServerName);
         }
 
-        function connectToSelectedServer(trimmedPassword) {
-            const statusDiv = document.getElementById('status');
-            if (!selectedServer) {
+        function connectToServer(address, trimmedPassword, serverName = null) {
+            const statusDiv = getStatusElement();
+            if (!address) {
+                setPasswordModalPending(false);
                 statusDiv.className = 'status error';
                 statusDiv.textContent = 'No server selected';
                 return;
@@ -711,13 +874,13 @@
 
             hideConnectionOverlay();
             retryPassword = trimmedPassword;
-            retryServerId = selectedServer;
+            retryServerId = address;
 
             fetch('/api/connect', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    server_id: selectedServer,
+                    server_id: address,
                     socket_id: socket.id,
                     password: trimmedPassword
                 })
@@ -726,18 +889,18 @@
                 .then(data => {
                     if (window.RC_VERBOSE) console.log('[browser] connect response', data);
                     if (data.status === 'connected') {
-                        saveRecentServer(selectedServer, trimmedPassword, selectedServer);
+                        saveRecentServer(address, trimmedPassword, serverName);
                         renderRecentServers();
-                        statusDiv.className = 'status';
-                        statusDiv.textContent = 'Waiting for server authorization...';
                     } else {
-                        statusDiv.className = 'status';
+                        setPasswordModalPending(false);
+                        statusDiv.className = 'status error';
                         statusDiv.textContent = data.error || 'Connection failed';
                     }
                 })
                 .catch((err) => {
                     console.error('[browser] connect request failed', err);
-                    statusDiv.className = 'status';
+                    setPasswordModalPending(false);
+                    statusDiv.className = 'status error';
                     statusDiv.textContent = 'Connection error';
                 });
         }
@@ -777,7 +940,7 @@
             await closeWebRTCConnection();
             hideConnectionOverlay();
 
-            const statusDiv = document.getElementById('status');
+            const statusDiv = getStatusElement();
             if (statusDiv) {
                 statusDiv.className = 'status loading';
                 statusDiv.textContent = 'Reconnecting...';
@@ -799,13 +962,13 @@
                 if (data.status === 'connected') {
                     suppressConnectionOverlay = false;
                     if (statusDiv) {
-                        statusDiv.className = 'status';
+                        statusDiv.className = 'status loading';
                         statusDiv.textContent = 'Waiting for server authorization...';
                     }
                 } else {
                     suppressConnectionOverlay = false;
                     if (statusDiv) {
-                        statusDiv.className = 'status';
+                        statusDiv.className = 'status error';
                         statusDiv.textContent = data.error || 'Retry failed';
                     }
                     showConnectionOverlay('Retry failed', data.error || 'Connection could not be restored.');
@@ -814,17 +977,13 @@
                 console.error('[browser] retry request failed', err);
                 suppressConnectionOverlay = false;
                 if (statusDiv) {
-                    statusDiv.className = 'status';
+                    statusDiv.className = 'status error';
                     statusDiv.textContent = 'Retry failed';
                 }
                 showConnectionOverlay('Retry failed', 'The relay could not be reached. Please try again.');
             } finally {
                 retryInProgress = false;
             }
-        }
-
-        function connectToServer(address, element) {
-            showPasswordModal(address, element);
         }
 
         async function closeWebRTCConnection() {
@@ -998,7 +1157,7 @@
                         window.dispatchEvent(new Event('resize'));
                         console.log('[browser] remoteVideo loadedmetadata', remoteVideo.videoWidth, remoteVideo.videoHeight);
                     };
-                    remoteVideo.play().catch(() => {});
+                    remoteVideo.play().catch(() => { });
                 } catch (e) {
                     console.error('ontrack error', e);
                 }
@@ -1006,10 +1165,11 @@
 
             channel.onopen = () => {
                 if (window.RC_VERBOSE) console.log('[browser] datachannel open');
+                showNotice('', 'info');
                 webrtcReady = true;
                 sendCommand({ type: 'set_quality_profile', profile: streamSettings.quality });
                 sendCommand({ type: 'set_stream_setting', setting: 'fps', value: streamSettings.fps });
-                const statusDiv = document.getElementById('status');
+                const statusDiv = getStatusElement();
                 if (statusDiv) {
                     statusDiv.className = 'status connected';
                     statusDiv.textContent = 'Connected via WebRTC';
@@ -1139,7 +1299,7 @@
                                     off.width = bm.width; off.height = bm.height;
                                     const octx = off.getContext('2d');
                                     octx.drawImage(bm, 0, 0);
-                                    try { bm.close(); } catch (e) {}
+                                    try { bm.close(); } catch (e) { }
                                     const url = off.toDataURL('image/png');
                                     remoteCursorImg.src = url;
                                     remoteCursorImg.style.display = 'block';
@@ -1160,7 +1320,7 @@
                             updateCursorDisplay();
                         }
                     } catch (e) {
-                        try { remoteCursorImg.src = 'data:image/png;base64,' + imgB64; remoteCursorImg.style.display = 'block'; } catch (ex) {}
+                        try { remoteCursorImg.src = 'data:image/png;base64,' + imgB64; remoteCursorImg.style.display = 'block'; } catch (ex) { }
                         updateCursorDisplay();
                     }
                 } catch (e) {
@@ -1209,14 +1369,14 @@
                                 ctx.drawImage(bitmap, 0, 0);
                             }
                         } finally {
-                            try { if (bitmap.close) bitmap.close(); } catch (e) {}
+                            try { if (bitmap.close) bitmap.close(); } catch (e) { }
                         }
                         try {
                             if (meta && typeof meta.cursorHotspotX !== 'undefined') {
                                 cursorHotspotX = meta.cursorHotspotX || 0;
                                 cursorHotspotY = meta.cursorHotspotY || 0;
                             }
-                        } catch (e) {}
+                        } catch (e) { }
                         updateCursorDisplay();
                     };
 
@@ -1243,7 +1403,7 @@
                                         cursorHotspotX = meta.cursorHotspotX || 0;
                                         cursorHotspotY = meta.cursorHotspotY || 0;
                                     }
-                                } catch (e) {}
+                                } catch (e) { }
                                 updateCursorDisplay();
                             };
                             img.onerror = (err) => { URL.revokeObjectURL(url); console.warn('Binary frame image load failed', err); };
@@ -1270,7 +1430,7 @@
                                     cursorHotspotX = meta.cursorHotspotX || 0;
                                     cursorHotspotY = meta.cursorHotspotY || 0;
                                 }
-                            } catch (e) {}
+                            } catch (e) { }
                             updateCursorDisplay();
                         };
                         img.onerror = (err) => { URL.revokeObjectURL(url); console.warn('Binary frame image load failed', err); };
@@ -1293,10 +1453,11 @@
 
             pc.onconnectionstatechange = () => {
                 if (pc.connectionState === 'connected') {
+                    showNotice('', 'info');
                     suppressConnectionOverlay = false;
                     retryInProgress = false;
                     webrtcReady = true;
-                    const statusDiv = document.getElementById('status');
+                    const statusDiv = getStatusElement();
                     if (statusDiv) {
                         statusDiv.className = 'status connected';
                         statusDiv.textContent = 'Connected via WebRTC';
@@ -1305,11 +1466,6 @@
                 } else if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
                     if (retryInProgress || suppressConnectionOverlay) {
                         return;
-                    }
-                    const statusDiv = document.getElementById('status');
-                    if (statusDiv) {
-                        statusDiv.className = 'status';
-                        statusDiv.textContent = 'Connection lost';
                     }
                     showConnectionOverlay('Connection lost', 'The remote session was interrupted. Retry to reconnect.');
                 }
@@ -1328,9 +1484,9 @@
                 });
             }).catch((err) => {
                 console.error('CreateOffer failed', err);
-                const statusDiv = document.getElementById('status');
+                const statusDiv = getStatusElement();
                 if (statusDiv) {
-                    statusDiv.className = 'status';
+                    statusDiv.className = 'status error';
                     statusDiv.textContent = 'WebRTC setup failed';
                 }
             });
@@ -1413,10 +1569,12 @@
         });
 
         socket.on('session_ready', (data) => {
-            const statusDiv = document.getElementById('status');
+            const statusDiv = getStatusElement();
             try {
                 if (data && data.server_id && selectedServer && data.server_id === selectedServer) {
-                    statusDiv.className = 'status';
+                    setPasswordModalPending(false);
+                    hidePasswordModal();
+                    statusDiv.className = 'status loading';
                     statusDiv.textContent = 'Connecting via WebRTC...';
                     startWebRTCSession();
                 } else {
@@ -1424,7 +1582,7 @@
                 }
             } catch (e) {
                 if (statusDiv) {
-                    statusDiv.className = 'status';
+                    statusDiv.className = 'status error';
                     statusDiv.textContent = e.message || 'Error starting WebRTC session';
                 }
                 console.error(e);
@@ -1433,13 +1591,10 @@
 
         socket.on('session_denied', (data) => {
             try {
-                const statusDiv = document.getElementById('status');
                 const isThisBrowser = data && data.browser_sid === socket.id;
                 const isThisServer = data && data.server_id && selectedServer && data.server_id === selectedServer;
                 if (isThisBrowser || isThisServer) {
-                    statusDiv.className = 'status error';
-                    statusDiv.textContent = 'Authentication failed';
-                    selectedServer = null;
+                    showAuthenticationError();
                 }
             } catch (e) {
                 console.error(e);
@@ -1450,11 +1605,6 @@
             if (!data || !selectedServer || data.server_id !== selectedServer) return;
             await closeWebRTCConnection();
             isConnected = false;
-            const statusDiv = document.getElementById('status');
-            if (statusDiv) {
-                statusDiv.className = 'status error';
-                statusDiv.textContent = 'Server connection lost';
-            }
             showConnectionOverlay('Server connection lost', 'The server is reconnecting. Please retry shortly.');
         });
 
@@ -2005,16 +2155,21 @@
             retryServerId = null;
             hideConnectionOverlay();
             switchMainView('connect');
-            const statusDiv = document.getElementById('status');
-            if (statusDiv) { statusDiv.className = 'status'; statusDiv.textContent = 'Disconnected'; }
+            showNotice('', 'info');
         }
 
         function switchMainView(targetView) {
             const connectView = document.getElementById('view-connect');
             const screenView = document.getElementById('view-screen');
+            const connectHeader = document.querySelector('.connect-header');
+            const screenHeader = document.getElementById('screenHeader');
             const incomingView = targetView === 'screen' ? screenView : connectView;
             const outgoingView = targetView === 'screen' ? connectView : screenView;
             if (!incomingView || !outgoingView || incomingView === outgoingView) return;
+
+            document.body.classList.toggle('screen-active', targetView === 'screen');
+            if (connectHeader) connectHeader.setAttribute('aria-hidden', String(targetView === 'screen'));
+            if (screenHeader) screenHeader.setAttribute('aria-hidden', String(targetView !== 'screen'));
 
             clearTimeout(viewSwitchTimer);
             incomingView.style.display = 'block';
@@ -2026,6 +2181,9 @@
             requestAnimationFrame(() => {
                 outgoingView.classList.add('view-leaving');
                 incomingView.classList.remove('view-entering');
+                if (targetView === 'connect') {
+                    updateTabIndicator(document.querySelector('.tab-btn.active'));
+                }
             });
 
             viewSwitchTimer = setTimeout(() => {
