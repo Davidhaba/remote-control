@@ -512,8 +512,11 @@ body.screen-active .connect-header {
     transition: background-color 160ms ease, border-color 160ms ease, transform 160ms ease;
 }
 
-.server-item:last-child {
-    margin-bottom: 0;
+.server-item > div:first-child {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
 }
 
 .server-item:hover {
@@ -682,6 +685,10 @@ body.screen-active .connect-header {
 .connection-overlay-text,
 .modal-content label {
     color: var(--muted);
+}
+
+.small-font {
+    font-size: 14px;
 }
 
 .text-padd {

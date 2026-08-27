@@ -438,6 +438,8 @@
         let retryServerId = null;
         let suppressConnectionOverlay = false;
         let retryInProgress = false;
+        let connectAttemptTimer = null;
+        let connectAttemptId = 0;
         let touchInputMode = 'touchpad';
         let touchGesture = null;
         let touchpadHold = null;
@@ -448,6 +450,7 @@
         let ignoreMouseUntil = 0;
         const STREAM_SETTINGS_STORAGE_KEY = 'remoteControl.streamSettings';
         const QUALITY_PROFILES = ['low', 'medium', 'high'];
+        const CLIENT_CONNECT_TIMEOUT = 30000;
 
         const headerDragState = {
             active: false,
@@ -679,7 +682,7 @@
                         item.className = 'server-item';
                         const serverName = server.name || server.hostname || 'Unknown';
                         const serverId = server.server_id || server.address || 'Unknown';
-                        item.innerHTML = `<span>${serverName}</span><br><span class="muted-text small">ID: ${serverId}</span>`;
+                        item.innerHTML = `<div><span>${serverName}</span><span class="muted-text small-font">ID: ${serverId}</span></div>`;
                         item.onclick = () => showPasswordModal(serverId, item, serverName);
                         serverList.appendChild(item);
                         __serverItems.push({ element: item, text: `${serverName} ${serverId} ${server.hostname || ''} ${server.address || ''}`.toLowerCase() });
@@ -728,7 +731,7 @@
             recent.forEach(server => {
                 const item = document.createElement('div');
                 item.className = 'server-item';
-                item.innerHTML = `<div><span>${server.label || 'Unknown'}</span><br><span class="muted-text small">ID: ${server.address}</span></div><button type="button" class="recent-delete" title="Remove from history" aria-label="Remove ${server.label || server.address} from history"><i class="fa fa-trash"></i></button>`;
+                item.innerHTML = `<div><span>${server.label || 'Unknown'}</span><span class="muted-text small-font">ID: ${server.address}</span></div><button type="button" class="recent-delete" title="Remove from history" aria-label="Remove ${server.label || server.address} from history"><i class="fa fa-trash"></i></button>`;
                 item.onclick = () => connectWithStoredPassword(server, item);
                 item.querySelector('.recent-delete').onclick = (event) => deleteRecentServer(server.address, event);
                 recentList.appendChild(item);
@@ -863,6 +866,31 @@
             connectToServer(selectedServer, trimmedPassword, selectedServerName);
         }
 
+        function clearConnectAttemptTimer() {
+            if (connectAttemptTimer) {
+                clearTimeout(connectAttemptTimer);
+                connectAttemptTimer = null;
+            }
+        }
+
+        function startConnectAttemptTimer(address, attemptId) {
+            clearConnectAttemptTimer();
+            connectAttemptTimer = setTimeout(() => {
+                if (attemptId !== connectAttemptId || selectedServer !== address) return;
+                connectAttemptTimer = null;
+                connectAttemptId++;
+                setPasswordModalPending(false);
+                const statusDiv = getStatusElement();
+                statusDiv.className = 'status error';
+                statusDiv.textContent = 'Connection timed out. The server did not respond.';
+                fetch('/api/disconnect', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ socket_id: socket.id })
+                }).catch(() => { });
+            }, CLIENT_CONNECT_TIMEOUT);
+        }
+
         function connectToServer(address, trimmedPassword, serverName = null) {
             const statusDiv = getStatusElement();
             if (!address) {
@@ -875,6 +903,8 @@
             hideConnectionOverlay();
             retryPassword = trimmedPassword;
             retryServerId = address;
+            const attemptId = ++connectAttemptId;
+            startConnectAttemptTimer(address, attemptId);
 
             fetch('/api/connect', {
                 method: 'POST',
@@ -887,18 +917,22 @@
             })
                 .then(res => res.json())
                 .then(data => {
+                    if (attemptId !== connectAttemptId) return;
                     if (window.RC_VERBOSE) console.log('[browser] connect response', data);
                     if (data.status === 'connected') {
                         saveRecentServer(address, trimmedPassword, serverName);
                         renderRecentServers();
                     } else {
+                        clearConnectAttemptTimer();
                         setPasswordModalPending(false);
                         statusDiv.className = 'status error';
                         statusDiv.textContent = data.error || 'Connection failed';
                     }
                 })
                 .catch((err) => {
+                    if (attemptId !== connectAttemptId) return;
                     console.error('[browser] connect request failed', err);
+                    clearConnectAttemptTimer();
                     setPasswordModalPending(false);
                     statusDiv.className = 'status error';
                     statusDiv.textContent = 'Connection error';
@@ -1572,6 +1606,7 @@
             const statusDiv = getStatusElement();
             try {
                 if (data && data.server_id && selectedServer && data.server_id === selectedServer) {
+                    clearConnectAttemptTimer();
                     setPasswordModalPending(false);
                     hidePasswordModal();
                     statusDiv.className = 'status loading';
@@ -1594,6 +1629,7 @@
                 const isThisBrowser = data && data.browser_sid === socket.id;
                 const isThisServer = data && data.server_id && selectedServer && data.server_id === selectedServer;
                 if (isThisBrowser || isThisServer) {
+                    clearConnectAttemptTimer();
                     showAuthenticationError();
                 }
             } catch (e) {

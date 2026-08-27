@@ -625,7 +625,6 @@ def connect_to_relay():
 def main():
     threading.Thread(target=create_tray_icon, daemon=True).start()
     threading.Thread(target=capture_cursor_worker, daemon=True).start()
-    threading.Thread(target=relay_heartbeat, daemon=True).start()
     last_connect_time = 0
     while True:
         try:
@@ -638,23 +637,6 @@ def main():
         except Exception as e:
             error(f'main loop exception: {e}')
             break
-
-
-def relay_heartbeat():
-    global relay_connected
-    while True:
-        try:
-            if shutdown_event.is_set():
-                break
-            if relay_connected:
-                relay_socket.emit('server_heartbeat', {'server_id': args.server_id})
-        except Exception as exc:
-            error(f'[relay] heartbeat failed: {exc}')
-            relay_connected = False
-        if not relay_connected:
-            time.sleep(1)
-            continue
-        time.sleep(5)
 
 
 def _create_webrtc_event_loop():
