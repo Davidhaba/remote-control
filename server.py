@@ -1751,7 +1751,7 @@ def _send_cached_cursor(browser_sid):
         channel = session.get('channel')
         if channel is None or getattr(channel, 'readyState', None) != 'open':
             return
-        if cursor_b64 == session.get('last_sent_cursor_b64'):
+        if session.get('first_cursor_sent', False) and cursor_b64 == session.get('last_sent_cursor_b64'):
             return
     try:
         if cursor_b64 is None:
@@ -1768,6 +1768,7 @@ def _send_cached_cursor(browser_sid):
             current = webrtc_sessions.get(browser_sid)
             if current is session:
                 session['last_sent_cursor_b64'] = cursor_b64
+                session['first_cursor_sent'] = True
     except Exception as exc:
         dbg(f'cursor cache send failed browser_sid={browser_sid}: {exc}')
 
