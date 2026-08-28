@@ -28,9 +28,7 @@ registered_servers = {}
 browser_sessions = {}
 state_lock = threading.RLock()
 active_socket_ids = set()
-SESSION_TIMEOUT = 3600
-PENDING_SESSION_TIMEOUT = 120
-SERVER_CLEANUP_INTERVAL = 10
+SERVER_CLEANUP_INTERVAL = 30
 SERVER_DISCONNECT_GRACE = 120
 SERVER_RESPONSE_TIMEOUT = 30
 
@@ -88,24 +86,6 @@ def _cleanup_sessions():
         try:
             now = time.time()
             with state_lock:
-                expired_session_ids = []
-                for session_id, session in list(browser_sessions.items()):
-                    if session_id in active_socket_ids:
-                        continue
-                    last_activity = session.get('last_activity', session.get('created_at', now))
-                    timeout = SESSION_TIMEOUT if session.get('authorized') else PENDING_SESSION_TIMEOUT
-                    if now - last_activity > timeout:
-                        expired_session_ids.append(session_id)
-                for session_id in expired_session_ids:
-                    session = browser_sessions.pop(session_id, None)
-                    if session:
-                        server = registered_servers.get(session.get('server_id'))
-                        if server and server.get('sid'):
-                            socketio.emit('end_session', {
-                                'browser_sid': session_id,
-                                'server_id': session.get('server_id'),
-                            }, room=server['sid'])
-
                 expired_servers = []
                 for server_id, server_info in list(registered_servers.items()):
                     server_sid = server_info.get('sid')
@@ -202,7 +182,7 @@ def connect():
         with state_lock:
             if browser_sessions.get(socket_id) is session:
                 browser_sessions.pop(socket_id, None)
-        socketio.emit('end_session', {
+        socketio.emit('session_ended', {
             'browser_sid': socket_id,
             'server_id': server_id,
         }, room=server_sid)
@@ -239,7 +219,7 @@ def api_disconnect():
     if session:
         server_id = session.get('server_id')
         if server and server.get('sid'):
-            socketio.emit('end_session', {'browser_sid': socket_id, 'server_id': server_id}, room=server['sid'])
+            socketio.emit('session_ended', {'browser_sid': socket_id, 'server_id': server_id}, room=server['sid'])
     return jsonify({'status': 'disconnected'})
 
 
@@ -387,7 +367,7 @@ def handle_socket_disconnect():
         _signal_server_sessions(server_id_for_disconnect, 'unavailable')
 
     if session and server and server.get('sid'):
-        socketio.emit('end_session', {'browser_sid': browser_sid, 'server_id': server_id}, room=server['sid'])
+        socketio.emit('session_ended', {'browser_sid': browser_sid, 'server_id': server_id}, room=server['sid'])
 
 
 if __name__ == '__main__':

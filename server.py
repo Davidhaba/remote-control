@@ -622,6 +622,7 @@ def connect_to_relay():
 
 
 def main():
+    global relay_socket, relay_connected
     threading.Thread(target=create_tray_icon, daemon=True).start()
     threading.Thread(target=capture_cursor_worker, daemon=True).start()
     threading.Thread(target=capture_screen_worker, daemon=True).start()
@@ -630,13 +631,12 @@ def main():
         try:
             if shutdown_event.is_set():
                 break
-            if not relay_connected and (time.time() - last_connect_time) > 5:
+            if (not relay_connected or not getattr(relay_socket, 'connected', False)) and (time.time() - last_connect_time) > 5:
                 connect_to_relay()
                 last_connect_time = time.time()
             time.sleep(0.1)
         except Exception as e:
             error(f'main loop exception: {e}')
-            break
 
 
 def _create_webrtc_event_loop():
@@ -1088,8 +1088,8 @@ def _cleanup_webrtc_session(browser_sid, remove_session=True):
                 pass
 
 
-@relay_socket.on('end_session')
-def on_end_session(data):
+@relay_socket.on('session_ended')
+def on_session_ended(data):
     data = data or {}
     browser_sid = data.get('browser_sid')
     if browser_sid:
