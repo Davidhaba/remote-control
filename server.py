@@ -607,8 +607,7 @@ def connect_to_relay():
     try:
         if shutdown_event.is_set():
             return
-        if getattr(relay_socket, 'connected', False):
-            relay_connected = True
+        if getattr(relay_socket, 'connected', False) and relay_connected:
             return
 
         dbg(f'connecting to relay {relay_url}')
@@ -625,6 +624,7 @@ def connect_to_relay():
 def main():
     threading.Thread(target=create_tray_icon, daemon=True).start()
     threading.Thread(target=capture_cursor_worker, daemon=True).start()
+    threading.Thread(target=capture_screen_worker, daemon=True).start()
     last_connect_time = 0
     while True:
         try:
@@ -653,6 +653,11 @@ def _create_webrtc_event_loop():
 
 frame_seq = 0
 
+screen_cache_lock = threading.Lock()
+screen_cache_frame = None
+screen_cache_version = 0
+screen_capture_active = False
+
 
 class ScreenVideoTrack(VideoStreamTrack):
 
@@ -670,7 +675,13 @@ class ScreenVideoTrack(VideoStreamTrack):
         except Exception:
             pass
 
+
     async def recv(self):
+        if self._stopped:
+            raise Exception('track stopped')
+        media_resume_event = self.session.get('media_resume_event')
+        if media_resume_event is not None:
+            await media_resume_event.wait()
         if self._stopped:
             raise Exception('track stopped')
         t0 = time.time()
@@ -699,7 +710,7 @@ class ScreenVideoTrack(VideoStreamTrack):
             if self.session.get('encoder_bitrate') != self.session.get('bitrate'):
                 _apply_video_encoder_bitrate(self.session)
             channel = self.session.get('channel')
-            if channel is not None and getattr(channel, 'readyState', None) == 'open':
+            if self.session.get('server_send_enabled', True) and channel is not None and getattr(channel, 'readyState', None) == 'open':
                 with cursor_lock:
                     cursor_b64 = cursor_cache.get('b64')
                     hotspot_x = cursor_cache.get('hx', 0)
@@ -756,10 +767,125 @@ class ScreenVideoTrack(VideoStreamTrack):
 
     def stop(self):
         self._stopped = True
+        media_resume_event = self.session.get('media_resume_event')
+        if media_resume_event is not None:
+            media_resume_event.set()
         try:
             super().stop()
         except Exception:
             pass
+
+
+def _screen_frame_for_session(frame, session):
+    target_width = int(session.get('target_w') or FIXED_FRAME_WIDTH)
+    target_height = int(session.get('target_h') or FIXED_FRAME_HEIGHT)
+    if frame.shape[1] == target_width and frame.shape[0] == target_height:
+        return frame
+
+    scale = min(target_width / frame.shape[1], target_height / frame.shape[0])
+    resized_width = max(1, int(frame.shape[1] * scale))
+    resized_height = max(1, int(frame.shape[0] * scale))
+    resized = cv2.resize(frame, (resized_width, resized_height), interpolation=cv2.INTER_AREA)
+    if resized_width == target_width and resized_height == target_height:
+        return resized
+    output = np.zeros((target_height, target_width, 3), dtype=resized.dtype)
+    offset_x = (target_width - resized_width) // 2
+    offset_y = (target_height - resized_height) // 2
+    output[offset_y:offset_y + resized_height, offset_x:offset_x + resized_width] = resized
+    return output
+
+
+def _send_cached_screen(browser_sid):
+    with screen_cache_lock:
+        frame = screen_cache_frame
+        version = screen_cache_version
+    if frame is None:
+        return
+
+    with webrtc_sessions_lock:
+        session = webrtc_sessions.get(browser_sid)
+        if not session:
+            return
+        session['screen_send_scheduled'] = False
+        if not session.get('server_send_enabled', True):
+            return
+        channel = session.get('channel')
+        if channel is None or getattr(channel, 'readyState', None) != 'open':
+            return
+        if session.get('last_sent_screen_version', 0) >= version:
+            return
+
+    try:
+        frame = _screen_frame_for_session(frame, session)
+        quality = {'low': 70, 'medium': 82, 'high': 90}.get(session.get('quality_profile'), 82)
+        encoded, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
+        if not encoded:
+            return
+        channel.send(json.dumps({
+            'type': 'frame',
+            'frame': base64.b64encode(jpeg.tobytes()).decode('ascii'),
+            'frame_id': version,
+            'width': int(frame.shape[1]),
+            'height': int(frame.shape[0]),
+        }))
+        with webrtc_sessions_lock:
+            current = webrtc_sessions.get(browser_sid)
+            if current is session:
+                session['last_sent_screen_version'] = version
+        with screen_cache_lock:
+            has_newer_frame = screen_cache_version > version
+        if has_newer_frame:
+            _schedule_screen_send(browser_sid)
+    except Exception as exc:
+        dbg(f'screen cache send failed browser_sid={browser_sid}: {exc}')
+
+
+def _schedule_screen_send(browser_sid):
+    with webrtc_sessions_lock:
+        session = webrtc_sessions.get(browser_sid)
+        if not session or not session.get('server_send_enabled', True):
+            return
+        loop = session.get('loop')
+        if not loop_running(loop) or session.get('screen_send_scheduled'):
+            return
+        session['screen_send_scheduled'] = True
+        loop.call_soon_threadsafe(_send_cached_screen, browser_sid)
+
+
+def capture_screen_worker():
+    global screen_cache_frame, screen_cache_version, screen_capture_active
+    last_frame = None
+    screen_capture_active = True
+    try:
+        while not shutdown_event.is_set():
+            with webrtc_sessions_lock:
+                has_enabled_sessions = any(
+                    session.get('server_send_enabled', True)
+                    for session in webrtc_sessions.values()
+                )
+            if not has_enabled_sessions:
+                time.sleep(0.1)
+                continue
+
+            frame = capture_screen_dxgi()
+            if frame is None:
+                time.sleep(0.02)
+                continue
+            if last_frame is not None and np.array_equal(frame, last_frame):
+                time.sleep(1.0 / max(1, CAPTURE_FPS))
+                continue
+
+            last_frame = frame.copy()
+            with screen_cache_lock:
+                screen_cache_frame = last_frame
+                screen_cache_version += 1
+            with webrtc_sessions_lock:
+                browser_sids = list(webrtc_sessions)
+            for browser_sid in browser_sids:
+                _schedule_screen_send(browser_sid)
+            time.sleep(1.0 / max(1, CAPTURE_FPS))
+    finally:
+        screen_capture_active = False
 
 
 class SystemAudioTrack(AudioStreamTrack):
@@ -806,8 +932,17 @@ class SystemAudioTrack(AudioStreamTrack):
     async def recv(self):
         if self._stopped:
             raise Exception('track stopped')
+        media_resume_event = getattr(self, 'media_resume_event', None)
+        if media_resume_event is not None:
+            await media_resume_event.wait()
+        if self._stopped:
+            raise Exception('track stopped')
         raw = await asyncio.to_thread(self._audio_queue.get)
         if raw is None or self._stopped:
+            raise Exception('track stopped')
+        if media_resume_event is not None:
+            await media_resume_event.wait()
+        if self._stopped:
             raise Exception('track stopped')
         frame = AudioFrame(
             format='s16',
@@ -825,6 +960,9 @@ class SystemAudioTrack(AudioStreamTrack):
         if self._stopped:
             return
         self._stopped = True
+        media_resume_event = getattr(self, 'media_resume_event', None)
+        if media_resume_event is not None:
+            media_resume_event.set()
         try:
             self._audio_queue.put_nowait(None)
         except queue.Full:
@@ -1110,7 +1248,6 @@ def on_relay_disconnect():
     relay_connected = False
     if shutdown_event.is_set():
         return
-    info('relay socket disconnected')
     with webrtc_sessions_lock:
         session_ids = list(webrtc_sessions.keys())
     for sid in session_ids:
@@ -1118,6 +1255,7 @@ def on_relay_disconnect():
             _cleanup_webrtc_session(sid)
         except Exception:
             pass
+    info('relay socket disconnected')
 
 
 def _build_candidate(candidate_data):
@@ -1329,6 +1467,8 @@ def _run_webrtc_offer(browser_sid, offer):
             def on_open():
                 info(f'datachannel open event for browser_sid={browser_sid}')
                 session['open'] = True
+                _schedule_screen_send(browser_sid)
+                _schedule_cursor_send(browser_sid)
                 info(f'datachannel ready for control messages browser_sid={browser_sid}')
 
             @channel.on("message")
@@ -1399,32 +1539,16 @@ def _run_webrtc_offer(browser_sid, offer):
             session = webrtc_sessions.get(browser_sid)
             if session:
                 session['remote_description_set'] = True
-        try:
-            video_track = ScreenVideoTrack(capture_screen_dxgi, session)
-            try:
-                transceiver = next(
-                    (item for item in pc.getTransceivers() if item.kind == 'video'),
-                    None,
-                )
-                if transceiver is None:
-                    transceiver = pc.addTransceiver('video', direction='sendonly')
-                else:
-                    transceiver.direction = 'sendonly'
-                sender = transceiver.sender
-                res = sender.replaceTrack(video_track)
-                if asyncio.iscoroutine(res):
-                    await res
-                dbg(f'configured RTP video transceiver and replaced track for browser_sid={browser_sid}')
-            except Exception as exc2:
-                dbg(f'addTransceiver failed, falling back to addTrack: {exc2}')
-                pc.addTrack(video_track)
+                session.setdefault('server_send_enabled', True)
+                if session.get('media_resume_event') is None:
+                    session['media_resume_event'] = asyncio.Event()
+                    if session['server_send_enabled']:
+                        session['media_resume_event'].set()
 
-            with webrtc_sessions_lock:
-                session = webrtc_sessions.get(browser_sid)
-                if session is not None:
-                    session['video_track'] = video_track
+        try:
             try:
                 audio_track = SystemAudioTrack()
+                audio_track.media_resume_event = session['media_resume_event']
                 transceiver = next(
                     (item for item in pc.getTransceivers() if item.kind == 'audio'),
                     None,
@@ -1611,6 +1735,55 @@ cursor_lock = threading.Lock()
 cursor_worker_active = False
 
 
+def _send_cached_cursor(browser_sid):
+    with cursor_lock:
+        cursor_b64 = cursor_cache.get('b64')
+        hotspot_x = cursor_cache.get('hx', 0)
+        hotspot_y = cursor_cache.get('hy', 0)
+        cursor_fmt = cursor_cache.get('fmt', 'png')
+    with webrtc_sessions_lock:
+        session = webrtc_sessions.get(browser_sid)
+        if not session:
+            return
+        session['cursor_send_scheduled'] = False
+        if not session.get('server_send_enabled', True):
+            return
+        channel = session.get('channel')
+        if channel is None or getattr(channel, 'readyState', None) != 'open':
+            return
+        if cursor_b64 == session.get('last_sent_cursor_b64'):
+            return
+    try:
+        if cursor_b64 is None:
+            channel.send(json.dumps({'type': 'cursor', 'cursorRemoved': True}))
+        else:
+            channel.send(json.dumps({
+                'type': 'cursor',
+                'cursorImage': cursor_b64,
+                'cursorHotspotX': hotspot_x,
+                'cursorHotspotY': hotspot_y,
+                'cursorFormat': cursor_fmt,
+            }))
+        with webrtc_sessions_lock:
+            current = webrtc_sessions.get(browser_sid)
+            if current is session:
+                session['last_sent_cursor_b64'] = cursor_b64
+    except Exception as exc:
+        dbg(f'cursor cache send failed browser_sid={browser_sid}: {exc}')
+
+
+def _schedule_cursor_send(browser_sid):
+    with webrtc_sessions_lock:
+        session = webrtc_sessions.get(browser_sid)
+        if not session or not session.get('server_send_enabled', True):
+            return
+        loop = session.get('loop')
+        if not loop_running(loop) or session.get('cursor_send_scheduled'):
+            return
+        session['cursor_send_scheduled'] = True
+        loop.call_soon_threadsafe(_send_cached_cursor, browser_sid)
+
+
 def capture_cursor_worker():
     global cursor_cache, cursor_lock
     last_b64 = None
@@ -1632,6 +1805,10 @@ def capture_cursor_worker():
                         cursor_cache["hy"] = hotspot_y
                         cursor_cache["fmt"] = "png"
                     last_b64 = cursor_b64
+                    with webrtc_sessions_lock:
+                        browser_sids = list(webrtc_sessions)
+                    for browser_sid in browser_sids:
+                        _schedule_cursor_send(browser_sid)
             except Exception:
                 last_b64 = None
 
@@ -1712,6 +1889,27 @@ def execute_command(cmd_data, browser_sid=None, ws_settings=None):
                     session['hq_until'] = int(frame_seq) + 2
         except Exception:
             pass
+        return
+    if cmd_type == 'set_server_data_sending':
+        try:
+            with webrtc_sessions_lock:
+                session = webrtc_sessions.get(browser_sid)
+                if session is None:
+                    return
+                enabled = bool(cmd_data.get('enabled', True))
+                session['server_send_enabled'] = enabled
+                media_resume_event = session.get('media_resume_event')
+                if media_resume_event is not None:
+                    if enabled:
+                        media_resume_event.set()
+                    else:
+                        media_resume_event.clear()
+            if enabled:
+                _schedule_screen_send(browser_sid)
+                _schedule_cursor_send(browser_sid)
+            dbg(f'server data sending {"enabled" if enabled else "paused"} browser_sid={browser_sid}')
+        except Exception as exc:
+            error(f'server data sending update failed: {exc}')
         return
     if cmd_type == "mouse_move":
         x, y = cmd_data.get("x"), cmd_data.get("y")

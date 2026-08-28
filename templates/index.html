@@ -161,7 +161,17 @@
         <div class="right-panel collapsed" id="rightPanel">
             <div class="panel-header">
                 <h3 id="controlsTitle">Controls</h3>
-                <button class="btn btn-ghost btn-small-text" title="Hide Controls" onclick="toggleControls()">X</button>
+                <button class="btn btn-ghost btn-square" title="Hide Controls" onclick="toggleControls()">X</button>
+            </div>
+
+            <div class="control-section">
+                <div class="control-title"><i class="fa fa-exchange"></i> Data transmission</div>
+                <div class="setting-options transmission-options" role="group" aria-label="Data transmission">
+                    <button type="button" class="setting-option active" id="serverDataToggle"
+                        aria-pressed="true" onclick="toggleServerDataSending()">Server data: On</button>
+                    <button type="button" class="setting-option active" id="clientDataToggle"
+                        aria-pressed="true" onclick="toggleClientDataSending()">Client commands: On</button>
+                </div>
             </div>
 
             <div class="control-section" id="qualitySection">
@@ -176,8 +186,8 @@
 
             <div class="control-section">
                 <div class="control-title"><i class="fa fa-film"></i> Frame rate</div>
-                <select id="fpsSelect" class="setting-select" onchange="setStreamSetting('fps', Number(this.value))">
-                    <option value="24">24 FPS</option>
+                <select id="fpsSelect" class="setting-select" onchange="setStreamSetting('fps', this.value)">
+                    <option value="15">15 FPS</option>
                     <option value="30" selected>30 FPS</option>
                     <option value="60">60 FPS</option>
                 </select>
@@ -440,6 +450,8 @@
         let retryInProgress = false;
         let connectAttemptTimer = null;
         let connectAttemptId = 0;
+        let serverDataSendingEnabled = true;
+        let clientDataSendingEnabled = true;
         let touchInputMode = 'touchpad';
         let touchGesture = null;
         let touchpadHold = null;
@@ -756,6 +768,11 @@
             element.classList.add('selected');
             selectedServer = server.address;
             selectedServerName = server.label || null;
+            const statusDiv = getStatusElement();
+            if (statusDiv) {
+                statusDiv.className = 'status loading';
+                statusDiv.textContent = 'Connecting...';
+            }
             connectToServer(server.address, server.password, selectedServerName);
         }
 
@@ -1080,6 +1097,10 @@
 
         function resetControlPanels() {
             clearTimeout(keyboardTabSwitchTimer);
+            serverDataSendingEnabled = true;
+            clientDataSendingEnabled = true;
+            updateTransmissionToggle('serverDataToggle', 'Server data', true);
+            updateTransmissionToggle('clientDataToggle', 'Client commands', true);
             const bottomPanel = document.getElementById('bottomPanel');
             if (bottomPanel) {
                 bottomPanel.classList.remove('is-open');
@@ -1127,7 +1148,7 @@
             try {
                 const stored = JSON.parse(localStorage.getItem(STREAM_SETTINGS_STORAGE_KEY) || '{}');
                 const quality = QUALITY_PROFILES.includes(stored.quality) ? stored.quality : 'medium';
-                const fps = [24, 30, 60].includes(Number(stored.fps)) ? Number(stored.fps) : 30;
+                const fps = Number.isFinite(Number(stored.fps)) ? Number(stored.fps) : 30;
                 return { quality, fps };
             } catch (error) {
                 return { quality: 'medium', fps: 30 };
@@ -1144,7 +1165,7 @@
         function applyStoredStreamSettings() {
             const settings = getStoredStreamSettings();
             const fpsSelect = document.getElementById('fpsSelect');
-            if (fpsSelect) fpsSelect.value = String(settings.fps);
+            if (fpsSelect && [15, 30, 60].includes(settings.fps)) fpsSelect.value = String(settings.fps);
             document.querySelectorAll('[data-quality]').forEach(button => {
                 button.classList.toggle('active', button.dataset.quality === settings.quality);
             });
@@ -1884,7 +1905,7 @@
                 const midpointX = (first.clientX + second.clientX) / 2;
                 const midpointY = (first.clientY + second.clientY) / 2;
                 const areaRect = screenArea.getBoundingClientRect();
-                const nextZoom = Math.max(1, Math.min(3.5, pinchGesture.startZoom * pinchDistance(event.touches) / pinchGesture.startDistance));
+                const nextZoom = Math.max(1, Math.min(10, pinchGesture.startZoom * pinchDistance(event.touches) / pinchGesture.startDistance));
                 const localX = (pinchGesture.startMidpointX - areaRect.left - pinchGesture.startOffsetX) / pinchGesture.startZoom;
                 const localY = (pinchGesture.startMidpointY - areaRect.top - pinchGesture.startOffsetY) / pinchGesture.startZoom;
                 screenZoom = nextZoom;
@@ -2111,15 +2132,36 @@
 
         function sendKey(key) { sendCommand({ type: 'key_press', key }); }
 
-        function sendCommand(cmd) {
+        function updateTransmissionToggle(id, label, enabled) {
+            const button = document.getElementById(id);
+            if (!button) return;
+            button.classList.toggle('active', enabled);
+            button.setAttribute('aria-pressed', String(enabled));
+            button.textContent = `${label}: ${enabled ? 'On' : 'Off'}`;
+        }
+
+        function toggleServerDataSending() {
+            serverDataSendingEnabled = !serverDataSendingEnabled;
+            updateTransmissionToggle('serverDataToggle', 'Server data', serverDataSendingEnabled);
+            sendCommand({ type: 'set_server_data_sending', enabled: serverDataSendingEnabled }, { allowWhenDisabled: true });
+        }
+
+        function toggleClientDataSending() {
+            clientDataSendingEnabled = !clientDataSendingEnabled;
+            updateTransmissionToggle('clientDataToggle', 'Client commands', clientDataSendingEnabled);
+        }
+
+        function sendCommand(cmd, options = {}) {
+            if (!clientDataSendingEnabled && !options.allowWhenDisabled) return false;
             if (webrtcReady && webrtcChannel && webrtcChannel.readyState === 'open') {
                 try {
                     webrtcChannel.send(JSON.stringify(cmd));
-                    return;
+                    return true;
                 } catch (e) {
                     console.warn('WebRTC send failed', e);
                 }
             }
+            return false;
         }
 
         function setQualityProfile(profile) {
@@ -2135,7 +2177,7 @@
         function setStreamSetting(setting, value) {
             const settings = getStoredStreamSettings();
             if (setting === 'fps') {
-                settings.fps = [24, 30, 60].includes(Number(value)) ? Number(value) : 30;
+                settings.fps = Number.isFinite(Number(value)) ? Number(value) : 30;
                 saveStreamSettings(settings);
             }
             sendCommand({ type: 'set_stream_setting', setting, value });
