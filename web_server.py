@@ -29,8 +29,8 @@ browser_sessions = {}
 state_lock = threading.RLock()
 active_socket_ids = set()
 SERVER_CLEANUP_INTERVAL = 30
-SERVER_DISCONNECT_GRACE = 120
-SERVER_RESPONSE_TIMEOUT = 30
+SERVER_DISCONNECT_GRACE = 60
+SERVER_RESPONSE_TIMEOUT = 15
 
 
 def _touch_session(socket_id):

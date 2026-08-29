@@ -901,7 +901,6 @@ async def _async_cleanup_webrtc_session(browser_sid, remove_session=True):
         if not session:
             return
 
-    session['open'] = False
     pc = session.get('pc')
     if pc is not None:
         try:
@@ -1049,7 +1048,6 @@ def _cleanup_webrtc_session(browser_sid, remove_session=True):
         if not session:
             return
 
-        session['open'] = False
         task = session.get('frame_task')
         loop = session.get('loop')
         pc = session.get('pc')
@@ -1208,7 +1206,6 @@ def on_webrtc_offer(data):
                 'pc': None,
                 'browser_sid': browser_sid,
                 'channel': None,
-                'open': False,
                 'candidate_queue': [],
                 'loop': None,
                 'remote_description_set': False,
@@ -1241,7 +1238,6 @@ def on_webrtc_candidate(data):
                 'pc': None,
                 'browser_sid': browser_sid,
                 'channel': None,
-                'open': False,
                 'candidate_queue': [candidate],
                 'loop': None,
                 'remote_description_set': False,
@@ -1327,7 +1323,6 @@ def _run_webrtc_offer(browser_sid, offer):
                     'pc': None,
                     'browser_sid': browser_sid,
                     'channel': None,
-                    'open': False,
                     'candidate_queue': [],
                     'loop': None,
                     'remote_description_set': False,
@@ -1336,7 +1331,6 @@ def _run_webrtc_offer(browser_sid, offer):
             session['pc'] = pc
             session['loop'] = asyncio.get_running_loop()
             session['channel'] = None
-            session['open'] = False
             session.setdefault('candidate_queue', [])
             session['remote_description_set'] = False
 
@@ -1345,14 +1339,6 @@ def _run_webrtc_offer(browser_sid, offer):
             info(f'datachannel created for browser_sid={browser_sid} id={channel.label}')
             dbg(f'datachannel protocol={channel.protocol} negotiated={channel.negotiated} readyState={channel.readyState}')
             session['channel'] = channel
-
-            @channel.on("open")
-            def on_open():
-                info(f'datachannel open event for browser_sid={browser_sid}')
-                session['open'] = True
-                _schedule_screen_send(browser_sid)
-                _schedule_cursor_send(browser_sid)
-                info(f'datachannel ready for control messages browser_sid={browser_sid}')
 
             @channel.on("message")
             def on_message(message):
@@ -1379,7 +1365,8 @@ def _run_webrtc_offer(browser_sid, offer):
                 ).start()
 
             if channel.readyState == 'open':
-                session['open'] = True
+                _schedule_screen_send(browser_sid)
+                _schedule_cursor_send(browser_sid)
 
         @pc.on("icecandidate")
         def on_icecandidate(event):
@@ -1536,7 +1523,6 @@ def _run_webrtc_offer(browser_sid, offer):
                 'pc': None,
                 'browser_sid': browser_sid,
                 'channel': None,
-                'open': False,
                 'candidate_queue': [],
                 'loop': webrtc_loop,
                 'remote_description_set': False,
