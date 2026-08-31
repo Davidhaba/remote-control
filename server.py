@@ -1697,69 +1697,6 @@ def write_unicode_text(text):
 
 def execute_command(cmd_data, browser_sid=None, ws_settings=None):
     cmd_type = cmd_data.get("type")
-    if cmd_type == 'set_capture_params':
-        try:
-            with webrtc_sessions_lock:
-                session = webrtc_sessions.get(browser_sid)
-                if session is None and ws_settings is not None:
-                    session = ws_settings
-            if session is not None:
-                fps = cmd_data.get('fps')
-                if fps:
-                    try:
-                        session['fps'] = int(fps)
-                    except Exception:
-                        pass
-                mq = cmd_data.get('min_quality')
-                if mq is not None:
-                    try:
-                        session['min_quality'] = int(mq)
-                    except Exception:
-                        pass
-                Mq = cmd_data.get('max_quality')
-                if Mq is not None:
-                    try:
-                        session['max_quality'] = int(Mq)
-                    except Exception:
-                        pass
-                ki = cmd_data.get('keyframe_interval')
-                if ki is not None:
-                    try:
-                        session['keyframe_interval'] = int(ki)
-                    except Exception:
-                        pass
-                at = cmd_data.get('adaptive_threshold')
-                if at is not None:
-                    try:
-                        session['adaptive_threshold'] = float(at)
-                    except Exception:
-                        pass
-                br = cmd_data.get('bitrate')
-                if br is not None:
-                    try:
-                        session['bitrate'] = int(br)
-                    except Exception:
-                        pass
-                tw = cmd_data.get('target_width')
-                th = cmd_data.get('target_height')
-                if tw is not None and th is not None:
-                    try:
-                        session['target_w'] = int(tw)
-                        session['target_h'] = int(th)
-                    except Exception:
-                        pass
-        except Exception:
-            pass
-        return
-    if cmd_type == 'request_keyframe':
-        try:
-            with webrtc_sessions_lock:
-                session = webrtc_sessions.get(browser_sid)
-                if session is not None:
-                    session['hq_until'] = int(frame_seq) + 2
-        except Exception:
-            pass
-        return
     if cmd_type == 'set_server_data_sending':
         try:
             with webrtc_sessions_lock:

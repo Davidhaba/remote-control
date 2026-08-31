@@ -1,4 +1,3 @@
-# Web relay
 Flask
 Flask-SocketIO
 gunicorn
