@@ -131,6 +131,14 @@ def download_server_file():
     )
 
 
+@app.route('/download/RemoteControlCertificate.crt', methods=['GET'])
+def download_certificate_file():
+    return redirect(
+        'https://github.com/Davidhaba/remote-control/releases/download/latest/RemoteControlCertificate.crt',
+        code=302,
+    )
+
+
 @app.route('/api/discover-servers', methods=['GET'])
 def discover_servers():
     try:

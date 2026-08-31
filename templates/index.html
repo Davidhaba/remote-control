@@ -303,9 +303,11 @@
                 <div class="setup-step">
                     <span class="setup-step-number">01</span>
                     <div>
-                        <strong>Download the server</strong>
-                        <p>Save the server application on the computer you want to control.</p>
+                        <strong>Download the files</strong>
+                        <p>Download the certificate and server files on the computer you want to control.</p>
                         <div class="setup-step-downloads">
+                            <a class="btn btn-primary" href="/download/RemoteControlCertificate.crt"><i
+                                    class="fa fa-certificate"></i> RemoteControlCertificate.crt</a>
                             <a class="btn btn-primary" href="/download/RemoteControlServer.exe"><i
                                     class="fa fa-download"></i> RemoteControlServer.exe</a>
                         </div>
@@ -313,18 +315,24 @@
                 </div>
                 <div class="setup-step">
                     <span class="setup-step-number">02</span>
-                    <div><strong>Start the server</strong>
-                        <p>Open the downloaded file. Windows may ask you to confirm that you want to run it.</p>
+                    <div><strong>Install the certificate</strong>
+                        <p>Open RemoteControlCertificate.crt and install it to the trusted certificate store. On Windows 11, choose Local Machine → Trusted Root Certification Authorities. This step is not required on Windows 10 and older versions.</p>
                     </div>
                 </div>
                 <div class="setup-step">
                     <span class="setup-step-number">03</span>
+                    <div><strong>Start the server</strong>
+                        <p>Run the downloaded server file. Windows may ask you to confirm that you want to run it.</p>
+                    </div>
+                </div>
+                <div class="setup-step">
+                    <span class="setup-step-number">04</span>
                     <div><strong>Allow access</strong>
                         <p>If Windows Firewall asks, allow network access so the server can connect to the relay.</p>
                     </div>
                 </div>
                 <div class="setup-step">
-                    <span class="setup-step-number">04</span>
+                    <span class="setup-step-number">05</span>
                     <div><strong>Connect here</strong>
                         <p>Return to this page, choose Desktop, scan for hosts, and select your computer.</p>
                     </div>
