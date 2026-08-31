@@ -134,7 +134,7 @@ def download_server_file():
 @app.route('/download/RemoteControlCertificate.crt', methods=['GET'])
 def download_certificate_file():
     return redirect(
-        'https://github.com/Davidhaba/remote-control/releases/download/latest/RemoteControlCertificate.crt',
+        'https://github.com/Davidhaba/remote-control/releases/download/certificate/RemoteControlCertificate.crt',
         code=302,
     )
 
