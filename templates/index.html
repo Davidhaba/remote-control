@@ -316,7 +316,9 @@
                 <div class="setup-step">
                     <span class="setup-step-number">02</span>
                     <div><strong>Install the certificate</strong>
-                        <p>Open RemoteControlCertificate.crt and install it to the trusted certificate store. On Windows 11, choose Local Machine → Trusted Root Certification Authorities. This step is not required on Windows 10 and older versions.</p>
+                        <p>Open RemoteControlCertificate.crt and install it to the trusted certificate store. On Windows
+                            11, choose Local Machine → Trusted Root Certification Authorities. This step is not required
+                            on Windows 10 and older versions.</p>
                     </div>
                 </div>
                 <div class="setup-step">
@@ -882,13 +884,13 @@
         function submitPasswordModal(event) {
             event.preventDefault();
             const passwordInput = document.getElementById('passwordInput');
-            const trimmedPassword = passwordInput.value.trim();
-            if (!trimmedPassword) {
+            const password = passwordInput.value || '';
+            if (!password.trim()) {
                 passwordInput.focus();
                 return;
             }
             setPasswordModalPending(true);
-            connectToServer(selectedServer, trimmedPassword, selectedServerName);
+            connectToServer(selectedServer, password, selectedServerName);
         }
 
         function clearConnectAttemptTimer() {
@@ -916,7 +918,7 @@
             }, CLIENT_CONNECT_TIMEOUT);
         }
 
-        function connectToServer(address, trimmedPassword, serverName = null) {
+        function connectToServer(address, password, serverName = null) {
             const statusDiv = getStatusElement();
             if (!address) {
                 setPasswordModalPending(false);
@@ -926,7 +928,7 @@
             }
 
             hideConnectionOverlay();
-            retryPassword = trimmedPassword;
+            retryPassword = password;
             retryServerId = address;
             const attemptId = ++connectAttemptId;
             startConnectAttemptTimer(address, attemptId);
@@ -937,7 +939,7 @@
                 body: JSON.stringify({
                     server_id: address,
                     socket_id: socket.id,
-                    password: trimmedPassword
+                    password: password
                 })
             })
                 .then(res => res.json())
@@ -945,7 +947,7 @@
                     if (attemptId !== connectAttemptId) return;
                     if (window.RC_VERBOSE) console.log('[browser] connect response', data);
                     if (data.status === 'connected') {
-                        saveRecentServer(address, trimmedPassword, serverName);
+                        saveRecentServer(address, password, serverName);
                         renderRecentServers();
                     } else {
                         clearConnectAttemptTimer();
@@ -1183,7 +1185,18 @@
         function startWebRTCSession() {
             if (webrtcPeer) throw new Error('WebRTC session already started');
             if (!selectedServer) throw new Error('No server selected');
-            const pc = new RTCPeerConnection({ iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }] });
+            const google_ice_servers = [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' }
+            ];
+            const metered_ice_servers = [
+                { urls: "stun:stun.relay.metered.ca:80" },
+                { urls: "turn:standard.relay.metered.ca:80", username: "5a6310f10b842c288e1acc1e", credential: "mXbU+iDXu7mkOJRi" },
+                { urls: "turn:standard.relay.metered.ca:80?transport=tcp", username: "5a6310f10b842c288e1acc1e", credential: "mXbU+iDXu7mkOJRi" },
+                { urls: "turn:standard.relay.metered.ca:443", username: "5a6310f10b842c288e1acc1e", credential: "mXbU+iDXu7mkOJRi" },
+                { urls: "turns:standard.relay.metered.ca:443?transport=tcp", username: "5a6310f10b842c288e1acc1e", credential: "mXbU+iDXu7mkOJRi" },
+            ];
+            const pc = new RTCPeerConnection({ iceServers: [...google_ice_servers, ...metered_ice_servers] });
             webrtcPeer = pc;
             webrtcReady = false;
             const streamSettings = applyStoredStreamSettings();
@@ -1342,12 +1355,10 @@
                     }
                     const imgB64 = payload.cursorImage;
                     if (!imgB64) return;
-                    // set cursor image and hotspot
                     cursorHotspotX = payload.cursorHotspotX || 0;
                     cursorHotspotY = payload.cursorHotspotY || 0;
                     cursorImageAvailable = true;
                     if (!remoteCursorImg) remoteCursorImg = document.getElementById('remoteCursorImg');
-                    // use blob and createImageBitmap for faster rendering if possible
                     try {
                         const bin = atob(imgB64);
                         const len = bin.length;
@@ -1356,7 +1367,6 @@
                         const blob = new Blob([arr], { type: 'image/png' });
                         if (window.createImageBitmap) {
                             createImageBitmap(blob).then(bm => {
-                                // draw into an offscreen canvas and use as data URL to set img.src
                                 try {
                                     const off = document.createElement('canvas');
                                     off.width = bm.width; off.height = bm.height;
@@ -1913,7 +1923,7 @@
                 const midpointX = (first.clientX + second.clientX) / 2;
                 const midpointY = (first.clientY + second.clientY) / 2;
                 const areaRect = screenArea.getBoundingClientRect();
-                const nextZoom = Math.max(1, Math.min(10, pinchGesture.startZoom * pinchDistance(event.touches) / pinchGesture.startDistance));
+                const nextZoom = Math.max(1, Math.min(20, pinchGesture.startZoom * pinchDistance(event.touches) / pinchGesture.startDistance));
                 const localX = (pinchGesture.startMidpointX - areaRect.left - pinchGesture.startOffsetX) / pinchGesture.startZoom;
                 const localY = (pinchGesture.startMidpointY - areaRect.top - pinchGesture.startOffsetY) / pinchGesture.startZoom;
                 screenZoom = nextZoom;
@@ -1936,7 +1946,7 @@
                 touchpadHold = null;
                 sendCommand({ type: 'mouse_up', button: 'left', x: lastMouseX / screenWidth, y: lastMouseY / screenHeight, normalized: true });
                 if (sendClick) {
-                    sendCommand({ type: 'mouse_click', button: 'left', x: hold.x / screenWidth, y: hold.y / screenHeight, normalized: true });
+                    sendCommand({ type: 'mouse_click', button: 'left', x: lastMouseX / screenWidth, y: lastMouseY / screenHeight, normalized: true });
                 }
             };
             const finishTouchGesture = (event) => {

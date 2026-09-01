@@ -2,6 +2,9 @@
 STRING_RELAY_URL = 'https://remote-control-ee7w.onrender.com'
 CAPTURE_FPS = 30
 
+import sys
+if sys.stdout is not None:
+    print("Initializing server...")
 import argparse
 import os
 import socket
@@ -11,7 +14,6 @@ import time
 import json
 import base64
 import io
-import sys
 import ctypes
 import uuid
 import asyncio
@@ -30,6 +32,10 @@ from av.audio.frame import AudioFrame
 import fractions
 import traceback
 import faulthandler
+try:
+    from prompt_toolkit import PromptSession
+except ImportError:
+    PromptSession = None
 
 
 def _startup_message(message):
@@ -530,18 +536,17 @@ if not args.server_id:
 relay_socket = socketio.Client(
     logger=False,
     engineio_logger=False,
-    reconnection=False,
-    reconnection_attempts=0,
-    reconnection_delay=1,
-    reconnection_delay_max=5,
+    reconnection=True,
+    reconnection_attempts=10,
+    reconnection_delay=2,
+    reconnection_delay_max=15,
+    ssl_verify=True,
 )
 relay_connected = False
 webrtc_sessions = {}
 webrtc_sessions_lock = threading.Lock()
 webrtc_loop = None
 webrtc_loop_thread = None
-webrtc_loop_ready = None
-AUTH_TIMEOUT = 60 * 30
 tray_icon = None
 shutdown_event = threading.Event()
 
@@ -615,7 +620,13 @@ def connect_to_relay():
             relay_socket.disconnect()
         except Exception:
             pass
-        relay_socket.connect(relay_url, transports=['websocket'])
+
+        relay_socket.connect(
+            relay_url,
+            transports=['websocket', 'polling'],
+            namespaces=['/'],
+        )
+        relay_connected = getattr(relay_socket, 'connected', False)
     except Exception as e:
         relay_connected = False
         error(f'relay connection failed: {e}')
@@ -1279,14 +1290,30 @@ def on_webrtc_candidate(data):
 def _run_webrtc_offer(browser_sid, offer):
 
     async def _async_handle_offer():
-        ice_servers = [RTCIceServer(urls=['stun:stun.l.google.com:19302'])]
+        ice_servers = [
+            # Google STUN
+            RTCIceServer(urls="stun:stun.l.google.com:19302"),
+            RTCIceServer(urls="stun:stun1.l.google.com:19302"),
+            
+            # Metered (STUN & TURN)
+            RTCIceServer(urls="stun:stun.relay.metered.ca:80"),
+            RTCIceServer(urls="turn:standard.relay.metered.ca:80", username="5a6310f10b842c288e1acc1e", credential="mXbU+iDXu7mkOJRi"),
+            RTCIceServer(urls="turn:standard.relay.metered.ca:80?transport=tcp", username="5a6310f10b842c288e1acc1e", credential="mXbU+iDXu7mkOJRi"),
+            RTCIceServer(urls="turn:standard.relay.metered.ca:443", username="5a6310f10b842c288e1acc1e", credential="mXbU+iDXu7mkOJRi"),
+            RTCIceServer(urls="turns:standard.relay.metered.ca:443?transport=tcp", username="5a6310f10b842c288e1acc1e", credential="mXbU+iDXu7mkOJRi"),
+            
+            # Maybe it doesn't work
+            RTCIceServer(urls="turns:global.relay.metered.ca:443?transport=tcp", username="5a6310f10b842c288e1acc1e", credential="mXbU+iDXu7mkOJRi"),
+        ]
+
         try:
             extra = _parse_turn_servers_from_env()
             if extra:
                 ice_servers.extend(extra)
         except Exception:
             pass
-        pc = RTCPeerConnection(configuration=RTCConfiguration(ice_servers))
+        
+        pc = RTCPeerConnection(configuration=RTCConfiguration(iceServers=ice_servers))
 
         @pc.on('iceconnectionstatechange')
         def _on_iceconnectionstatechange():
@@ -1549,9 +1576,16 @@ def _run_webrtc_offer(browser_sid, offer):
 
 if args.password is None:
     try:
+        password_session = PromptSession() if PromptSession is not None else None
         while True:
-            entered_password = input('Set a password for remote access: ').strip()
-            if entered_password:
+            if password_session is not None:
+                entered_password = password_session.prompt(
+                    'Set a password for remote access: ',
+                    is_password=True,
+                ) or ""
+            else:
+                entered_password = input('Set a password for remote access: ') or ""
+            if entered_password.strip():
                 server_password = entered_password
                 break
             print('Password cannot be empty. Please enter a non-empty password.')
@@ -1565,7 +1599,8 @@ else:
     if not args.password.strip():
         error('password cannot be empty. Exiting.')
         sys.exit(1)
-    server_password = args.password.strip()
+    else:
+        server_password = args.password.strip()
 
 
 def capture_screen_dxgi():

@@ -33,13 +33,6 @@ SERVER_DISCONNECT_GRACE = 60
 SERVER_RESPONSE_TIMEOUT = 15
 
 
-def _touch_session(socket_id):
-    with state_lock:
-        session = browser_sessions.get(socket_id)
-        if session:
-            session['last_activity'] = time.time()
-
-
 def _disconnect_server(server_id, server_info):
     server_sid = server_info.get('sid') if server_info else None
     if not server_sid:
@@ -165,13 +158,10 @@ def connect():
         server = registered_servers.get(server_id)
         if not server or not server.get('sid'):
             return jsonify({'error': 'Selected server is not available'}), 404
-        now = time.time()
         session = {
             'server_id': server_id,
             'socket_id': socket_id,
-            'password': password.strip(),
-            'created_at': now,
-            'last_activity': now,
+            'password': password,
             'authorized': False,
             'connect_event': threading.Event(),
             'connect_result': None,
@@ -273,7 +263,6 @@ def handle_webrtc_offer(data):
         if not session:
             print('[web_server] no browser session for offer', browser_sid)
             return
-        session['last_activity'] = time.time()
         server_id = session.get('server_id')
         server = registered_servers.get(server_id)
     if not server or not server.get('sid'):
@@ -287,10 +276,9 @@ def handle_webrtc_answer(data):
     print(f'[web_server] webrtc_answer browser_sid={data.get("browser_sid")}')
     data = data or {}
     browser_sid = data.get('browser_sid')
-    if not browser_sid:
-        return
-    _touch_session(browser_sid)
-    socketio.emit('webrtc_answer', data, room=browser_sid)
+    if browser_sid:
+        socketio.emit('webrtc_answer', data, room=browser_sid)
+    return
 
 
 @socketio.on('webrtc_candidate')
@@ -307,13 +295,11 @@ def handle_webrtc_candidate(data):
             if not session:
                 print('[web_server] no browser session for candidate', browser_sid)
                 return
-            session['last_activity'] = time.time()
             server_id = session.get('server_id')
             server = registered_servers.get(server_id)
         if server and server.get('sid'):
             socketio.emit('webrtc_candidate', data, room=server['sid'])
         return
-    _touch_session(browser_sid)
     socketio.emit('webrtc_candidate', data, room=browser_sid)
 
 
@@ -327,7 +313,6 @@ def handle_session_ready_from_server(data):
         session = browser_sessions.get(browser_sid)
         if session:
             session['authorized'] = True
-            session['last_activity'] = time.time()
             session['connect_result'] = 'ready'
             if session.get('connect_event'):
                 session['connect_event'].set()
@@ -344,7 +329,6 @@ def handle_session_denied_from_server(data):
         session = browser_sessions.get(browser_sid)
         if session:
             session['authorized'] = False
-            session['last_activity'] = time.time()
             session['connect_result'] = 'denied'
             if session.get('connect_event'):
                 session['connect_event'].set()
