@@ -374,7 +374,6 @@
         let remoteDescriptionSet = false;
 
         let lastMouseX = 0, lastMouseY = 0;
-        let touchpadCursorInitialized = false;
         let mouseSetupDone = false;
         const TAP_MAX_MS = 250;
         const TAP_MOVE_THRESHOLD = 10;
@@ -458,6 +457,7 @@
         let retryServerId = null;
         let suppressConnectionOverlay = false;
         let retryInProgress = false;
+        let webrtcConnectionTimer = null;
         let connectAttemptTimer = null;
         let connectAttemptId = 0;
         let serverDataSendingEnabled = true;
@@ -473,6 +473,7 @@
         const STREAM_SETTINGS_STORAGE_KEY = 'remoteControl.streamSettings';
         const QUALITY_PROFILES = ['low', 'medium', 'high'];
         const CLIENT_CONNECT_TIMEOUT = 30000;
+        const WEBRTC_CONNECTION_TIMEOUT = 20000;
 
         const headerDragState = {
             active: false,
@@ -900,6 +901,22 @@
             }
         }
 
+        function clearWebRTCConnectionTimer() {
+            if (webrtcConnectionTimer) {
+                clearTimeout(webrtcConnectionTimer);
+                webrtcConnectionTimer = null;
+            }
+        }
+
+        function startWebRTCConnectionTimer(peer) {
+            clearWebRTCConnectionTimer();
+            webrtcConnectionTimer = setTimeout(async () => {
+                if (peer !== webrtcPeer || webrtcReady) return;
+                webrtcConnectionTimer = null;
+                await failWebRTCConnection('WebRTC connection timed out.', 'The WebRTC connection could not be established. Retry to try again.');
+            }, WEBRTC_CONNECTION_TIMEOUT);
+        }
+
         function startConnectAttemptTimer(address, attemptId) {
             clearConnectAttemptTimer();
             connectAttemptTimer = setTimeout(() => {
@@ -983,6 +1000,22 @@
             }
         }
 
+        async function failWebRTCConnection(statusMessage, overlayMessage) {
+            if (retryInProgress || suppressConnectionOverlay) return;
+            suppressConnectionOverlay = true;
+            await closeWebRTCConnection();
+            suppressConnectionOverlay = false;
+            const statusDiv = getStatusElement();
+            statusDiv.className = 'status error';
+            statusDiv.textContent = statusMessage;
+            showConnectionOverlay('Connection failed', overlayMessage);
+            fetch('/api/disconnect', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ socket_id: socket.id })
+            }).catch(() => { });
+        }
+
         async function retryConnection() {
             if (retryInProgress) {
                 return;
@@ -1048,6 +1081,7 @@
         }
 
         async function closeWebRTCConnection() {
+            clearWebRTCConnectionTimer();
             isConnected = false;
             if (touchpadHold?.timer) clearTimeout(touchpadHold.timer);
             touchpadHold = null;
@@ -1199,6 +1233,7 @@
             const pc = new RTCPeerConnection({ iceServers: [...google_ice_servers, ...metered_ice_servers] });
             webrtcPeer = pc;
             webrtcReady = false;
+            startWebRTCConnectionTimer(pc);
             const streamSettings = applyStoredStreamSettings();
 
             const channel = pc.createDataChannel('control');
@@ -1240,6 +1275,7 @@
             };
 
             channel.onopen = () => {
+                clearWebRTCConnectionTimer();
                 if (window.RC_VERBOSE) console.log('[browser] datachannel open');
                 showNotice('', 'info');
                 webrtcReady = true;
@@ -1526,6 +1562,7 @@
 
             pc.onconnectionstatechange = () => {
                 if (pc.connectionState === 'connected') {
+                    clearWebRTCConnectionTimer();
                     showNotice('', 'info');
                     suppressConnectionOverlay = false;
                     retryInProgress = false;
@@ -1537,10 +1574,15 @@
                     }
                     showScreenView();
                 } else if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+                    clearWebRTCConnectionTimer();
                     if (retryInProgress || suppressConnectionOverlay) {
                         return;
                     }
-                    showConnectionOverlay('Connection lost', 'The remote session was interrupted. Retry to reconnect.');
+                    if (pc.connectionState === 'failed') {
+                        failWebRTCConnection('WebRTC connection failed.', 'The WebRTC connection could not be established. Retry to try again.');
+                    } else {
+                        showConnectionOverlay('Connection lost', 'The remote session was interrupted. Retry to reconnect.');
+                    }
                 }
             };
 
@@ -1680,7 +1722,14 @@
             if (!data || !selectedServer || data.server_id !== selectedServer) return;
             await closeWebRTCConnection();
             isConnected = false;
-            showConnectionOverlay('Server connection lost', 'The server is reconnecting. Please retry shortly.');
+            if (data.reason === 'webrtc_failed') {
+                const statusDiv = getStatusElement();
+                statusDiv.className = 'status error';
+                statusDiv.textContent = 'WebRTC connection failed.';
+                showConnectionOverlay('Connection failed', 'The connection could not be established. Retry to try again.');
+            } else {
+                showConnectionOverlay('Server connection lost', 'The connection to the server has been lost. Please retry.');
+            }
         });
 
         function updateCursorDisplay() {
@@ -1710,19 +1759,6 @@
                 circle.style.borderWidth = Math.max(1, Math.ceil(displayScale / screenZoom)) + 'px';
                 circle.style.display = 'block';
             }
-        }
-
-        function centerRemoteCursor() {
-            lastMouseX = Math.round(screenWidth / 2);
-            lastMouseY = Math.round(screenHeight / 2);
-            touchpadCursorInitialized = true;
-            sendCommand({
-                type: 'mouse_move',
-                x: lastMouseX / screenWidth,
-                y: lastMouseY / screenHeight,
-                normalized: true
-            });
-            updateCursorDisplay();
         }
 
         function getVideoContentRect() {
@@ -2011,11 +2047,6 @@
                 const coords = touchpad
                     ? { screenX: touch.clientX, screenY: touch.clientY }
                     : coordsFromClient(touch.clientX, touch.clientY);
-                if (touchpad && !touchpadCursorInitialized) {
-                    lastMouseX = Math.round(screenWidth / 2);
-                    lastMouseY = Math.round(screenHeight / 2);
-                    touchpadCursorInitialized = true;
-                }
                 let button = 'left';
                 let buttonDown = false;
                 const isSecondTouchpadTap = touchpad && touchpadHold;
@@ -2215,8 +2246,10 @@
                 canvas.style.display = 'block';
                 ctx = canvas.getContext('2d');
             }
-            centerRemoteCursor();
             resetControlPanels();
+            lastMouseX = Math.round(screenWidth / 2);
+            lastMouseY = Math.round(screenHeight / 2);
+            updateCursorDisplay();
 
             const qualitySection = document.getElementById('qualitySection');
             if (qualitySection) qualitySection.style.display = 'block';

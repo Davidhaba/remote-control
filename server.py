@@ -952,6 +952,25 @@ async def _async_cleanup_webrtc_session(browser_sid, remove_session=True):
                 webrtc_sessions.pop(browser_sid, None)
 
 
+async def _handle_webrtc_failure(browser_sid, failed_pc):
+    with webrtc_sessions_lock:
+        session = webrtc_sessions.get(browser_sid)
+        if not session or session.get('pc') is not failed_pc or session.get('failure_handled'):
+            return
+        session['failure_handled'] = True
+
+    info(f'WebRTC connection failed for browser_sid={browser_sid}; closing session')
+    try:
+        relay_socket.emit('session_ended', {
+            'browser_sid': browser_sid,
+            'server_id': args.server_id,
+            'reason': 'webrtc_failed',
+        })
+    except Exception as exc:
+        error(f'failed to report WebRTC failure browser_sid={browser_sid}: {exc}')
+    await _async_cleanup_webrtc_session(browser_sid)
+
+
 def _apply_video_encoder_bitrate(session):
     if not session:
         return False
@@ -1301,9 +1320,6 @@ def _run_webrtc_offer(browser_sid, offer):
             RTCIceServer(urls="turn:standard.relay.metered.ca:80?transport=tcp", username="5a6310f10b842c288e1acc1e", credential="mXbU+iDXu7mkOJRi"),
             RTCIceServer(urls="turn:standard.relay.metered.ca:443", username="5a6310f10b842c288e1acc1e", credential="mXbU+iDXu7mkOJRi"),
             RTCIceServer(urls="turns:standard.relay.metered.ca:443?transport=tcp", username="5a6310f10b842c288e1acc1e", credential="mXbU+iDXu7mkOJRi"),
-            
-            # Maybe it doesn't work
-            RTCIceServer(urls="turns:global.relay.metered.ca:443?transport=tcp", username="5a6310f10b842c288e1acc1e", credential="mXbU+iDXu7mkOJRi"),
         ]
 
         try:
@@ -1319,6 +1335,8 @@ def _run_webrtc_offer(browser_sid, offer):
         def _on_iceconnectionstatechange():
             try:
                 dbg(f'iceConnectionState change for browser_sid={browser_sid}: {pc.iceConnectionState}')
+                if pc.iceConnectionState == 'failed':
+                    asyncio.create_task(_handle_webrtc_failure(browser_sid, pc))
             except Exception:
                 dbg('iceConnectionState change (failed to read state)')
 
@@ -1326,6 +1344,8 @@ def _run_webrtc_offer(browser_sid, offer):
         def _on_connectionstatechange():
             try:
                 dbg(f'connectionState change for browser_sid={browser_sid}: {pc.connectionState}')
+                if pc.connectionState in ('failed', 'closed'):
+                    asyncio.create_task(_handle_webrtc_failure(browser_sid, pc))
             except Exception:
                 dbg('connectionState change (failed to read state)')
 

@@ -319,6 +319,29 @@ def handle_session_ready_from_server(data):
     socketio.emit('session_ready', {'server_id': data.get('server_id')}, room=browser_sid)
 
 
+@socketio.on('session_ended')
+def handle_session_ended_from_server(data):
+    data = data or {}
+    browser_sid = data.get('browser_sid')
+    server_id = data.get('server_id')
+    if not browser_sid:
+        return
+
+    with state_lock:
+        registered_server = registered_servers.get(server_id)
+        if not registered_server or registered_server.get('sid') != request.sid:
+            return
+        session = browser_sessions.pop(browser_sid, None)
+        if session:
+            active_socket_ids.discard(browser_sid)
+
+    socketio.emit('session_ended', {
+        'browser_sid': browser_sid,
+        'server_id': server_id,
+        'reason': data.get('reason', 'server_ended'),
+    }, room=browser_sid)
+
+
 @socketio.on('session_denied')
 def handle_session_denied_from_server(data):
     data = data or {}
