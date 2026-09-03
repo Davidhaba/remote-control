@@ -5,4 +5,7 @@ __pycache__/
 .mypy_cache/
 .vscode/
 logs/*.log
+build.py
+RemoteControlServer.spec
+release/
 release/*.exe
