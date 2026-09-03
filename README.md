@@ -2,6 +2,8 @@
 
 Remote Control consists of a web panel and a Windows host for remotely controlling a computer.
 
+Live site: https://remote-control-ee7w.onrender.com
+
 - `web_server.py` runs the web interface, Socket.IO relay, and WebRTC signaling.
 - `remote_host.py` runs on the computer being controlled. It registers with the relay, streams video/system audio, and receives mouse and keyboard commands.
 - `templates/index.html` and `static/style.css` contain the panel interface.
