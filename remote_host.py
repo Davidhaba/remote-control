@@ -513,10 +513,10 @@ _mss_instance = None
 _mss_monitor = None
 _mss_lock = threading.Lock()
 
-parser = argparse.ArgumentParser(description='Remote control server')
+parser = argparse.ArgumentParser(description='Remote control host')
 parser.add_argument('--password', default=None, help='Optional password required for client authentication')
-parser.add_argument('--relay-url', default=None, help='Render Socket.IO relay URL')
-parser.add_argument('--server-id', default=None, help='Unique ID for this server')
+parser.add_argument('--relay', dest='relay_url', default=None, help='Socket.IO relay URL')
+parser.add_argument('--id', dest='server_id', default=None, help='Unique ID for this host')
 parser.add_argument('--debug', action='store_true', help='Enable verbose debug prints')
 args = parser.parse_args()
 relay_url = args.relay_url
@@ -525,7 +525,7 @@ if not relay_url:
 if not relay_url:
     relay_url = STRING_RELAY_URL
 if not relay_url:
-    info('No relay URL provided. Please set the RELAY_URL environment variable or use --relay-url argument.')
+    info('No relay URL provided. Please set the RELAY_URL environment variable or use --relay argument.')
     sys.exit(1)
 VERBOSE = bool(getattr(args, 'debug', False))
 

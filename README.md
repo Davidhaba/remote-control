@@ -56,18 +56,18 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 
 ```text
 --password PASSWORD    пароль для підключення
---relay-url URL        адреса relay Socket.IO
---server-id ID         власний унікальний ID комп'ютера
+--relay URL             адреса relay Socket.IO
+--id ID                 власний унікальний ID host
 --debug                розширене журналювання
 ```
 
 Приклад:
 
 ```powershell
-python remote_host.py --server-id office-pc --password "your-password"
+python remote_host.py --id office-pc --password "your-password"
 ```
 
-Relay за замовчуванням: `https://remote-control-ee7w.onrender.com`. Його можна змінити параметром `--relay-url` або змінною середовища `RELAY_URL`.
+Relay за замовчуванням: `https://remote-control-ee7w.onrender.com`. Його можна змінити параметром `--relay` або змінною середовища `RELAY_URL`.
 
 ## Робота у веб-панелі
 
