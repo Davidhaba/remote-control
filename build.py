@@ -47,7 +47,7 @@ cmd = [
     "--follow-import-to=PIL",
     "--follow-import-to=mss",
     "--follow-import-to=cv2",
-    "remote_client.py",
+    "remote_host.py",
 ]
 
 print(f"=== Старт збірки: {exe_filename} ===")

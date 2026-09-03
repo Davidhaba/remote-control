@@ -3,7 +3,7 @@
 Remote Control складається з веб-панелі та Windows-агента для віддаленого керування комп'ютером.
 
 - `web_server.py` запускає веб-інтерфейс, relay Socket.IO та обмін сигналами WebRTC.
-- `remote_client.py` запускається на комп'ютері, яким потрібно керувати. Він реєструється на relay, передає відео/системний звук і приймає команди миші та клавіатури.
+- `remote_host.py` запускається на комп'ютері, яким потрібно керувати. Він реєструється на relay, передає відео/системний звук і приймає команди миші та клавіатури.
 - `templates/index.html` і `static/style.css` містять інтерфейс панелі.
 - `build.py` збирає Windows EXE клієнтського агента за допомогою Nuitka.
 
@@ -44,19 +44,19 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
    python web_server.py
    ```
 
-2. На Windows-комп'ютері, яким потрібно керувати, запустіть агент:
+2. На Windows-комп'ютері, яким потрібно керувати, запустіть host:
 
    ```powershell
-   python remote_client.py
+   python remote_host.py
    ```
 
-   Агент попросить задати пароль, якщо його не передано параметром, і автоматично створить ID на основі імені комп'ютера.
+   Host попросить задати пароль, якщо його не передано параметром, і автоматично створить ID на основі імені комп'ютера.
 
 3. На веб-сторінці натисніть `Scan for hosts`, виберіть потрібний комп'ютер і введіть його пароль.
 
 Веб-панель і агент можуть працювати на різних комп'ютерах. У такому разі обидва мають мати доступ до налаштованого relay через мережу.
 
-## Параметри агента
+## Параметри host
 
 ```text
 --password PASSWORD    пароль для підключення
@@ -68,7 +68,7 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 Приклад:
 
 ```powershell
-python remote_client.py --server-id office-pc --password "your-password"
+python remote_host.py --server-id office-pc --password "your-password"
 ```
 
 Relay за замовчуванням: `https://remote-control-ee7w.onrender.com`. Його можна змінити параметром `--relay-url` або змінною середовища `RELAY_URL`.
