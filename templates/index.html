@@ -54,7 +54,7 @@
                         <div class="card-header">
                             <div>
                                 <div class="section-kicker">DESKTOP HOSTS</div>
-                                <div class="card-title">Available servers</div>
+                                <div class="card-title">Available hosts</div>
                                 <div class="card-subtitle">Select a host to open a remote session.</div>
                             </div>
                             <div class="card-pill">LAN</div>
@@ -67,7 +67,7 @@
 
                         <div class="search">
                             <i class="fa fa-search search-icon"></i>
-                            <input id="serverSearch" placeholder="Search servers" oninput="filterServers()">
+                            <input id="serverSearch" placeholder="Search hosts" oninput="filterServers()">
                             <button class="btn btn-ghost clear-search" aria-label="Clear search"
                                 onclick="document.getElementById('serverSearch').value='';filterServers();">&times;</button>
                         </div>
@@ -168,7 +168,7 @@
                 <div class="control-title"><i class="fa fa-exchange"></i> Data transmission</div>
                 <div class="setting-options transmission-options" role="group" aria-label="Data transmission">
                     <button type="button" class="setting-option active" id="serverDataToggle" aria-pressed="true"
-                        onclick="toggleServerDataSending()">Server data: On</button>
+                        onclick="toggleServerDataSending()">Host data: On</button>
                     <button type="button" class="setting-option active" id="clientDataToggle" aria-pressed="true"
                         onclick="toggleClientDataSending()">Client commands: On</button>
                 </div>
@@ -271,11 +271,11 @@
 
     <div id="passwordModal" class="modal-backdrop" onclick="cancelPasswordModal(event)">
         <div class="modal-content" onclick="event.stopPropagation();">
-            <h2>Enter server password</h2>
+            <h2>Enter host password</h2>
             <div id="modalServerInfo" class="server-info"></div>
             <form id="passwordForm" onsubmit="submitPasswordModal(event)">
                 <label for="passwordInput">Password</label>
-                <input id="passwordInput" type="password" autocomplete="current-password" placeholder="Server password"
+                <input id="passwordInput" type="password" autocomplete="current-password" placeholder="Host password"
                     required>
                 <div id="passwordError" class="password-error" role="alert" aria-live="polite"></div>
                 <div class="modal-actions">
@@ -293,7 +293,7 @@
             <div class="setup-modal-header">
                 <div>
                     <div class="section-kicker">QUICK START</div>
-                    <h2 id="setupModalTitle">Run the server</h2>
+                    <h2 id="setupModalTitle">Run the host</h2>
                 </div>
                 <button type="button" class="modal-close" aria-label="Close instructions"
                     onclick="hideSetupModal()">&times;</button>
@@ -304,7 +304,7 @@
                     <span class="setup-step-number">01</span>
                     <div>
                         <strong>Download the files</strong>
-                        <p>Download the certificate and server files on the computer you want to control.</p>
+                        <p>Download the certificate and host files on the computer you want to control.</p>
                         <div class="setup-step-downloads">
                             <a class="btn btn-primary" href="/download/RemoteControlCertificate.crt"><i
                                     class="fa fa-certificate"></i> RemoteControlCertificate.crt</a>
@@ -323,14 +323,14 @@
                 </div>
                 <div class="setup-step">
                     <span class="setup-step-number">03</span>
-                    <div><strong>Start the server</strong>
-                        <p>Run the downloaded server file. Windows may ask you to confirm that you want to run it.</p>
+                    <div><strong>Start the host</strong>
+                        <p>Run the downloaded host file. Windows may ask you to confirm that you want to run it.</p>
                     </div>
                 </div>
                 <div class="setup-step">
                     <span class="setup-step-number">04</span>
                     <div><strong>Allow access</strong>
-                        <p>If Windows Firewall asks, allow network access so the server can connect to the relay.</p>
+                        <p>If Windows Firewall asks, allow network access so the host can connect to the relay.</p>
                     </div>
                 </div>
                 <div class="setup-step">
@@ -341,7 +341,7 @@
                 </div>
             </div>
 
-            <div class="setup-note"><i class="fa fa-info-circle"></i> Keep this page and the server terminal running
+            <div class="setup-note"><i class="fa fa-info-circle"></i> Keep this page and the host terminal running
                 during the session.</div>
             <div class="modal-actions setup-actions">
                 <button type="button" class="btn btn-ghost" onclick="hideSetupModal()">Close</button>
@@ -687,20 +687,20 @@
         }
 
         function discoverServers() {
-            setListMessage('serverList', 'Searching for servers...', 'loading');
+            setListMessage('serverList', 'Searching for hosts...', 'loading');
 
-            fetch('/api/discover-servers')
+            fetch('/api/discover-hosts')
                 .then(res => res.json())
                 .then(data => {
                     const serverList = document.getElementById('serverList');
                     serverList.innerHTML = '';
                     clearListMessage('serverList');
                     __serverItems.length = 0;
-                    if (!data.servers || data.servers.length === 0) {
-                        setListMessage('serverList', 'No servers found');
+                    if (!data.hosts || data.hosts.length === 0) {
+                        setListMessage('serverList', 'No hosts found');
                         return;
                     }
-                    data.servers.forEach(server => {
+                    data.hosts.forEach(server => {
                         const item = document.createElement('div');
                         item.className = 'server-item';
                         const serverName = server.name || server.hostname || 'Unknown';
@@ -853,7 +853,7 @@
             const passwordError = document.getElementById('passwordError');
             showNotice('', 'info');
             setPasswordModalPending(false);
-            if (passwordError) passwordError.textContent = 'Authentication failed. Enter the correct server password.';
+            if (passwordError) passwordError.textContent = 'Authentication failed. Enter the correct host password.';
             if (passwordInput) {
                 passwordInput.focus();
                 passwordInput.select();
@@ -926,7 +926,7 @@
                 setPasswordModalPending(false);
                 const statusDiv = getStatusElement();
                 statusDiv.className = 'status error';
-                statusDiv.textContent = 'Connection timed out. The server did not respond.';
+                statusDiv.textContent = 'Connection timed out. The host did not respond.';
                 fetch('/api/disconnect', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -940,7 +940,7 @@
             if (!address) {
                 setPasswordModalPending(false);
                 statusDiv.className = 'status error';
-                statusDiv.textContent = 'No server selected';
+                statusDiv.textContent = 'No host selected';
                 return;
             }
 
@@ -1218,7 +1218,7 @@
 
         function startWebRTCSession() {
             if (webrtcPeer) throw new Error('WebRTC session already started');
-            if (!selectedServer) throw new Error('No server selected');
+            if (!selectedServer) throw new Error('No host selected');
             const google_ice_servers = [
                 { urls: 'stun:stun.l.google.com:19302' },
                 { urls: 'stun:stun1.l.google.com:19302' }
@@ -1554,7 +1554,7 @@
                 if (event.candidate) {
                     socket.emit('webrtc_candidate', {
                         browser_sid: socket.id,
-                        target: 'server',
+                        target: 'host',
                         candidate: event.candidate.toJSON(),
                     });
                 }
@@ -2192,7 +2192,7 @@
         function toggleServerDataSending() {
             serverDataSendingEnabled = !serverDataSendingEnabled;
             updateTransmissionToggle('serverDataToggle', 'Server data', serverDataSendingEnabled);
-            sendCommand({ type: 'set_server_data_sending', enabled: serverDataSendingEnabled }, { allowWhenDisabled: true });
+            sendCommand({ type: 'set_host_data_sending', enabled: serverDataSendingEnabled }, { allowWhenDisabled: true });
         }
 
         function toggleClientDataSending() {

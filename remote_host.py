@@ -36,7 +36,7 @@ if not relay_url:
 VERBOSE = bool(getattr(args, 'debug', False))
 
 if sys.stdout is not None:
-    print("Initializing server...")
+    print("Initializing host...")
 
 import socket
 import threading
@@ -589,7 +589,7 @@ def create_tray_icon():
             icon = pystray.Icon(
                 'remote_control',
                 img,
-                'Remote control server',
+                'Remote control host',
                 menu=pystray.Menu(
                     pystray.MenuItem('Open Logs Folder', on_open_logs),
                     pystray.MenuItem('Quit', on_quit),
@@ -704,7 +704,7 @@ def _send_cached_screen(browser_sid):
         if not session:
             return
         session['screen_send_scheduled'] = False
-        if not session.get('server_send_enabled', True):
+        if not session.get('host_send_enabled', True):
             return
         channel = session.get('channel')
         if channel is None or getattr(channel, 'readyState', None) != 'open':
@@ -740,7 +740,7 @@ def _send_cached_screen(browser_sid):
 def _schedule_screen_send(browser_sid):
     with webrtc_sessions_lock:
         session = webrtc_sessions.get(browser_sid)
-        if not session or not session.get('server_send_enabled', True):
+        if not session or not session.get('host_send_enabled', True):
             return
         loop = session.get('loop')
         if not loop_running(loop) or session.get('screen_send_scheduled'):
@@ -757,7 +757,7 @@ def capture_screen_worker():
         while not shutdown_event.is_set():
             with webrtc_sessions_lock:
                 has_enabled_sessions = any(
-                    session.get('server_send_enabled', True)
+                    session.get('host_send_enabled', True)
                     for session in webrtc_sessions.values()
                 )
             if not has_enabled_sessions:
@@ -1145,7 +1145,7 @@ def on_relay_connect():
     info('relay socket connected')
     dbg('relay connected via Socket.IO; media and control use WebRTC')
     try:
-        relay_socket.emit('register_server', {
+        relay_socket.emit('register_host', {
             'host_id': args.host_id,
             'name': socket.gethostname(),
             'hostname': socket.gethostname(),
@@ -1226,10 +1226,10 @@ def on_webrtc_offer(data):
     dbg(f'received webrtc_offer browser_sid={browser_sid} offer_present={bool(offer)}')
     dbg(f'offer payload keys={list(offer.keys()) if isinstance(offer, dict) else type(offer)}')
     if not offer:
-        info('[server] invalid offer payload')
+        info('[host] invalid offer payload')
         return
     if not browser_sid:
-        info('[server] missing browser_sid')
+        info('[host] missing browser_sid')
         return
 
     with webrtc_sessions_lock:
@@ -1260,7 +1260,7 @@ def on_webrtc_candidate(data):
     candidate = data.get('candidate')
     target = (data.get('target') or 'browser').lower()
     dbg(f'webrtc_candidate browser_sid={browser_sid} target={target} candidate_present={bool(candidate)}')
-    if not browser_sid or not candidate or target != 'server':
+    if not browser_sid or not candidate or target != 'host':
         return
 
     with webrtc_sessions_lock:
@@ -1459,10 +1459,10 @@ def _run_webrtc_offer(browser_sid, offer):
             session = webrtc_sessions.get(browser_sid)
             if session:
                 session['remote_description_set'] = True
-                session.setdefault('server_send_enabled', True)
+                session.setdefault('host_send_enabled', True)
                 if session.get('media_resume_event') is None:
                     session['media_resume_event'] = asyncio.Event()
-                    if session['server_send_enabled']:
+                    if session['host_send_enabled']:
                         session['media_resume_event'].set()
 
         try:
@@ -1673,7 +1673,7 @@ def _send_cached_cursor(browser_sid):
         if not session:
             return
         session['cursor_send_scheduled'] = False
-        if not session.get('server_send_enabled', True):
+        if not session.get('host_send_enabled', True):
             return
         channel = session.get('channel')
         if channel is None or getattr(channel, 'readyState', None) != 'open':
@@ -1703,7 +1703,7 @@ def _send_cached_cursor(browser_sid):
 def _schedule_cursor_send(browser_sid):
     with webrtc_sessions_lock:
         session = webrtc_sessions.get(browser_sid)
-        if not session or not session.get('server_send_enabled', True):
+        if not session or not session.get('host_send_enabled', True):
             return
         loop = session.get('loop')
         if not loop_running(loop) or session.get('cursor_send_scheduled'):
@@ -1755,14 +1755,14 @@ def write_unicode_text(text):
 
 def execute_command(cmd_data, browser_sid=None, ws_settings=None):
     cmd_type = cmd_data.get("type")
-    if cmd_type == 'set_server_data_sending':
+    if cmd_type == 'set_host_data_sending':
         try:
             with webrtc_sessions_lock:
                 session = webrtc_sessions.get(browser_sid)
                 if session is None:
                     return
                 enabled = bool(cmd_data.get('enabled', True))
-                session['server_send_enabled'] = enabled
+                session['host_send_enabled'] = enabled
                 media_resume_event = session.get('media_resume_event')
                 if media_resume_event is not None:
                     if enabled:
@@ -1772,9 +1772,9 @@ def execute_command(cmd_data, browser_sid=None, ws_settings=None):
             if enabled:
                 _schedule_screen_send(browser_sid)
                 _schedule_cursor_send(browser_sid)
-            dbg(f'server data sending {"enabled" if enabled else "paused"} browser_sid={browser_sid}')
+            dbg(f'host data sending {"enabled" if enabled else "paused"} browser_sid={browser_sid}')
         except Exception as exc:
-            error(f'server data sending update failed: {exc}')
+            error(f'host data sending update failed: {exc}')
         return
     if cmd_type == "mouse_move":
         x, y = cmd_data.get("x"), cmd_data.get("y")
