@@ -2,11 +2,42 @@
 STRING_RELAY_URL = 'https://remote-control-ee7w.onrender.com'
 CAPTURE_FPS = 30
 
+
+
 import sys
+import os
+import argparse
+
+def _startup_message(message):
+    try:
+        log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
+        os.makedirs(log_dir, exist_ok=True)
+        with open(os.path.join(log_dir, 'startup.log'), 'a', encoding='utf-8') as startup_log:
+            startup_log.write(f'{time.strftime("%Y-%m-%d %H:%M:%S")} {message}\n')
+    except Exception:
+        pass
+    if sys.stdout is not None:
+        print(message)
+
+parser = argparse.ArgumentParser(description='Remote control host')
+parser.add_argument('--password', default=None, help='Optional password required for client authentication')
+parser.add_argument('--relay', dest='relay_url', default=None, help='Socket.IO relay URL')
+parser.add_argument('--id', dest='host_id', default=None, help='Unique ID for this host')
+parser.add_argument('--debug', action='store_true', help='Enable verbose debug prints')
+args = parser.parse_args()
+relay_url = args.relay_url
+if not relay_url:
+    relay_url = os.environ.get('RELAY_URL', None)
+if not relay_url:
+    relay_url = STRING_RELAY_URL
+if not relay_url:
+    _startup_message('No relay URL provided. Please set the RELAY_URL environment variable or use --relay argument.')
+    sys.exit(1)
+VERBOSE = bool(getattr(args, 'debug', False))
+
 if sys.stdout is not None:
     print("Initializing server...")
-import argparse
-import os
+
 import socket
 import threading
 import numpy as np
@@ -37,19 +68,6 @@ try:
 except ImportError:
     PromptSession = None
 
-
-def _startup_message(message):
-    try:
-        log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
-        os.makedirs(log_dir, exist_ok=True)
-        with open(os.path.join(log_dir, 'startup.log'), 'a', encoding='utf-8') as startup_log:
-            startup_log.write(f'{time.strftime("%Y-%m-%d %H:%M:%S")} {message}\n')
-    except Exception:
-        pass
-    if sys.stdout is not None:
-        print(message)
-
-
 try:
     import pyaudiowpatch as pyaudio
 except Exception:
@@ -76,6 +94,11 @@ try:
 except Exception:
     pystray = None
     _startup_message("pystray module not found. System tray icon will be disabled.")
+
+
+if not args.host_id:
+    host_name = socket.gethostname().replace(' ', '-').lower()
+    args.host_id = f"{host_name}-{uuid.uuid4().hex[:8]}"
 
 VERBOSE = False
 LOG_DIR = Path(__file__).resolve().parent / 'logs'
@@ -513,26 +536,6 @@ _mss_instance = None
 _mss_monitor = None
 _mss_lock = threading.Lock()
 
-parser = argparse.ArgumentParser(description='Remote control host')
-parser.add_argument('--password', default=None, help='Optional password required for client authentication')
-parser.add_argument('--relay', dest='relay_url', default=None, help='Socket.IO relay URL')
-parser.add_argument('--id', dest='server_id', default=None, help='Unique ID for this host')
-parser.add_argument('--debug', action='store_true', help='Enable verbose debug prints')
-args = parser.parse_args()
-relay_url = args.relay_url
-if not relay_url:
-    relay_url = os.environ.get('RELAY_URL', None)
-if not relay_url:
-    relay_url = STRING_RELAY_URL
-if not relay_url:
-    info('No relay URL provided. Please set the RELAY_URL environment variable or use --relay argument.')
-    sys.exit(1)
-VERBOSE = bool(getattr(args, 'debug', False))
-
-if not args.server_id:
-    host_name = socket.gethostname().replace(' ', '-').lower()
-    args.server_id = f"{host_name}-{uuid.uuid4().hex[:8]}"
-
 relay_socket = socketio.Client(
     logger=False,
     engineio_logger=False,
@@ -896,14 +899,14 @@ def on_request_session(data):
             if browser_sid:
                 relay_socket.emit('session_denied', {
                     'browser_sid': browser_sid,
-                    'server_id': args.server_id,
+                    'host_id': args.host_id,
                     'reason': 'auth_failed'
                 })
             return
 
     if browser_sid:
         dbg('authorizing browser ' + str(browser_sid))
-        relay_socket.emit('session_ready', {'browser_sid': browser_sid, 'server_id': args.server_id})
+        relay_socket.emit('session_ready', {'browser_sid': browser_sid, 'host_id': args.host_id})
 
 
 async def _async_cleanup_webrtc_session(browser_sid, remove_session=True):
@@ -963,7 +966,7 @@ async def _handle_webrtc_failure(browser_sid, failed_pc):
     try:
         relay_socket.emit('session_ended', {
             'browser_sid': browser_sid,
-            'server_id': args.server_id,
+            'host_id': args.host_id,
             'reason': 'webrtc_failed',
         })
     except Exception as exc:
@@ -1143,12 +1146,12 @@ def on_relay_connect():
     dbg('relay connected via Socket.IO; media and control use WebRTC')
     try:
         relay_socket.emit('register_server', {
-            'server_id': args.server_id,
+            'host_id': args.host_id,
             'name': socket.gethostname(),
             'hostname': socket.gethostname(),
-            'address': args.server_id,
+            'address': args.host_id,
         })
-        info(f'server identity: id={args.server_id}\n                        name={socket.gethostname()}')
+        info(f'host identity: id={args.host_id}\n                        name={socket.gethostname()}')
     except Exception as exc:
         error(f're-register server failed after reconnect: {exc}')
 

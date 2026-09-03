@@ -454,7 +454,7 @@
         let isMobileBrowser = detectMobileBrowser();
         let isMobileTouchSession = () => isMobileBrowser;
         let retryPassword = '';
-        let retryServerId = null;
+        let retryHostId = null;
         let suppressConnectionOverlay = false;
         let retryInProgress = false;
         let webrtcConnectionTimer = null;
@@ -704,11 +704,11 @@
                         const item = document.createElement('div');
                         item.className = 'server-item';
                         const serverName = server.name || server.hostname || 'Unknown';
-                        const serverId = server.server_id || server.address || 'Unknown';
-                        item.innerHTML = `<div><span>${serverName}</span><span class="muted-text small-font">ID: ${serverId}</span></div>`;
-                        item.onclick = () => showPasswordModal(serverId, item, serverName);
+                        const hostId = server.host_id || server.address || 'Unknown';
+                        item.innerHTML = `<div><span>${serverName}</span><span class="muted-text small-font">ID: ${hostId}</span></div>`;
+                        item.onclick = () => showPasswordModal(hostId, item, serverName);
                         serverList.appendChild(item);
-                        __serverItems.push({ element: item, text: `${serverName} ${serverId} ${server.hostname || ''} ${server.address || ''}`.toLowerCase() });
+                        __serverItems.push({ element: item, text: `${serverName} ${hostId} ${server.hostname || ''} ${server.address || ''}`.toLowerCase() });
                     });
                     if (document.getElementById('serverSearch')?.value?.trim()) {
                         filterServers();
@@ -946,7 +946,7 @@
 
             hideConnectionOverlay();
             retryPassword = password;
-            retryServerId = address;
+            retryHostId = address;
             const attemptId = ++connectAttemptId;
             startConnectAttemptTimer(address, attemptId);
 
@@ -954,7 +954,7 @@
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    server_id: address,
+                    host_id: address,
                     socket_id: socket.id,
                     password: password
                 })
@@ -1023,14 +1023,14 @@
 
             retryInProgress = true;
             hideConnectionOverlay();
-            if (!retryServerId || !retryPassword) {
+            if (!retryHostId || !retryPassword) {
                 retryInProgress = false;
                 disconnectAndBack();
                 return;
             }
 
             suppressConnectionOverlay = true;
-            selectedServer = retryServerId;
+            selectedServer = retryHostId;
             await closeWebRTCConnection();
             hideConnectionOverlay();
 
@@ -1046,7 +1046,7 @@
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        server_id: retryServerId,
+                        host_id: retryHostId,
                         socket_id: socket.id,
                         password: retryPassword
                     })
@@ -1686,7 +1686,7 @@
         socket.on('session_ready', (data) => {
             const statusDiv = getStatusElement();
             try {
-                if (data && data.server_id && selectedServer && data.server_id === selectedServer) {
+                if (data && data.host_id && selectedServer && data.host_id === selectedServer) {
                     clearConnectAttemptTimer();
                     setPasswordModalPending(false);
                     hidePasswordModal();
@@ -1708,7 +1708,7 @@
         socket.on('session_denied', (data) => {
             try {
                 const isThisBrowser = data && data.browser_sid === socket.id;
-                const isThisServer = data && data.server_id && selectedServer && data.server_id === selectedServer;
+                const isThisServer = data && data.host_id && selectedServer && data.host_id === selectedServer;
                 if (isThisBrowser || isThisServer) {
                     clearConnectAttemptTimer();
                     showAuthenticationError();
@@ -1719,7 +1719,7 @@
         });
 
         socket.on('session_ended', async (data) => {
-            if (!data || !selectedServer || data.server_id !== selectedServer) return;
+            if (!data || !selectedServer || data.host_id !== selectedServer) return;
             await closeWebRTCConnection();
             isConnected = false;
             if (data.reason === 'webrtc_failed') {
@@ -2281,7 +2281,7 @@
             } catch (e) { }
             isConnected = false;
             retryPassword = '';
-            retryServerId = null;
+            retryHostId = null;
             hideConnectionOverlay();
             switchMainView('connect');
             showNotice('', 'info');

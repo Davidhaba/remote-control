@@ -33,24 +33,24 @@ SERVER_DISCONNECT_GRACE = 60
 SERVER_RESPONSE_TIMEOUT = 15
 
 
-def _disconnect_server(server_id, server_info):
+def _disconnect_server(host_id, server_info):
     server_sid = server_info.get('sid') if server_info else None
     if not server_sid:
         return
 
     with state_lock:
-        current_server = registered_servers.get(server_id)
+        current_server = registered_servers.get(host_id)
         if not current_server or current_server.get('sid') != server_sid:
             return
         session_ids = [
             socket_id for socket_id, session in browser_sessions.items()
-            if session.get('server_id') == server_id
+            if session.get('host_id') == host_id
         ]
         for socket_id in session_ids:
             browser_sessions.pop(socket_id, None)
 
     for socket_id in session_ids:
-        socketio.emit('session_ended', {'server_id': server_id}, room=socket_id)
+        socketio.emit('session_ended', {'host_id': host_id}, room=socket_id)
 
     try:
         socketio.server.disconnect(server_sid, namespace='/')
@@ -58,14 +58,14 @@ def _disconnect_server(server_id, server_info):
         pass
     with state_lock:
         active_socket_ids.discard(server_sid)
-        registered_servers.pop(server_id, None)
+        registered_servers.pop(host_id, None)
 
 
-def _signal_server_sessions(server_id, result):
+def _signal_host_sessions(host_id, result):
     with state_lock:
         sessions = [
             session for session in browser_sessions.values()
-            if session.get('server_id') == server_id
+            if session.get('host_id') == host_id
         ]
         for session in sessions:
             session['connect_result'] = result
@@ -80,7 +80,7 @@ def _cleanup_sessions():
             now = time.time()
             with state_lock:
                 expired_servers = []
-                for server_id, server_info in list(registered_servers.items()):
+                for host_id, server_info in list(registered_servers.items()):
                     server_sid = server_info.get('sid')
                     if server_sid in active_socket_ids:
                         server_info['disconnected_at'] = None
@@ -91,21 +91,21 @@ def _cleanup_sessions():
                         server_info['disconnected_at'] = now
                         continue
                     if now - disconnected_at > SERVER_DISCONNECT_GRACE:
-                        expired_servers.append((server_id, dict(server_info)))
-            for server_id, server_info in expired_servers:
-                _disconnect_server(server_id, server_info)
+                        expired_servers.append((host_id, dict(server_info)))
+            for host_id, server_info in expired_servers:
+                _disconnect_server(host_id, server_info)
         except Exception:
             pass
         time.sleep(SERVER_CLEANUP_INTERVAL)
 
 
-def _server_snapshot(server_id, server_info):
+def _host_snapshot(host_id, server_info):
     return {
-        'server_id': server_id,
-        'name': server_info.get('name', server_id),
+        'host_id': host_id,
+        'name': server_info.get('name', host_id),
         'status': server_info.get('status', 'online'),
-        'hostname': server_info.get('hostname', server_id),
-        'address': server_info.get('address', server_id),
+        'hostname': server_info.get('hostname', host_id),
+        'address': server_info.get('address', host_id),
         'direct_host': server_info.get('direct_host'),
         'direct_port': server_info.get('direct_port'),
     }
@@ -136,7 +136,7 @@ def download_certificate_file():
 def discover_servers():
     try:
         with state_lock:
-            servers = [_server_snapshot(server_id, server_info) for server_id, server_info in registered_servers.items()]
+            servers = [_host_snapshot(host_id, server_info) for host_id, server_info in registered_servers.items()]
         return jsonify({'servers': servers})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -145,21 +145,21 @@ def discover_servers():
 @app.route('/api/connect', methods=['POST'])
 def connect():
     data = request.get_json(silent=True) or {}
-    server_id = data.get('server_id') or data.get('address')
+    host_id = data.get('host_id') or data.get('address')
     socket_id = data.get('socket_id')
     password = data.get('password')
-    if not server_id or not socket_id:
+    if not host_id or not socket_id:
         return jsonify({'error': 'Missing server selection'}), 400
 
     if not password or not str(password).strip():
         return jsonify({'error': 'Password is required'}), 400
 
     with state_lock:
-        server = registered_servers.get(server_id)
+        server = registered_servers.get(host_id)
         if not server or not server.get('sid'):
             return jsonify({'error': 'Selected server is not available'}), 404
         session = {
-            'server_id': server_id,
+            'host_id': host_id,
             'socket_id': socket_id,
             'password': password,
             'authorized': False,
@@ -172,7 +172,7 @@ def connect():
 
     socketio.emit('request_session', {
         'browser_sid': socket_id,
-        'server_id': server_id,
+        'host_id': host_id,
         'password': password,
     }, room=server_sid)
 
@@ -182,7 +182,7 @@ def connect():
                 browser_sessions.pop(socket_id, None)
         socketio.emit('session_ended', {
             'browser_sid': socket_id,
-            'server_id': server_id,
+            'host_id': host_id,
         }, room=server_sid)
         return jsonify({'error': 'Server unavailable'}), 503
 
@@ -213,11 +213,11 @@ def api_disconnect():
     with state_lock:
         active_socket_ids.discard(socket_id)
         session = browser_sessions.pop(socket_id, None)
-        server = registered_servers.get(session.get('server_id')) if session else None
+        server = registered_servers.get(session.get('host_id')) if session else None
     if session:
-        server_id = session.get('server_id')
+        host_id = session.get('host_id')
         if server and server.get('sid'):
-            socketio.emit('session_ended', {'browser_sid': socket_id, 'server_id': server_id}, room=server['sid'])
+            socketio.emit('session_ended', {'browser_sid': socket_id, 'host_id': host_id}, room=server['sid'])
     return jsonify({'status': 'disconnected'})
 
 
@@ -232,18 +232,18 @@ def handle_socket_connect():
 def handle_register_server(data):
     data = data or {}
 
-    server_id = data.get('server_id') or f"server-{request.sid[:8]}"
-    print(f'[web_server] register_server {server_id} sid={request.sid}')
+    host_id = data.get('host_id') or f"host-{request.sid[:8]}"
+    print(f'[web_server] register_host {host_id} sid={request.sid}')
     with state_lock:
-        existing = registered_servers.get(server_id)
+        existing = registered_servers.get(host_id)
         if existing and existing.get('sid') != request.sid and existing.get('sid') in active_socket_ids:
             return
 
-        registered_servers[server_id] = {
+        registered_servers[host_id] = {
             'sid': request.sid,
-            'name': data.get('name', server_id),
+            'name': data.get('name', host_id),
             'hostname': data.get('hostname', socket.gethostname()),
-            'address': data.get('address', server_id),
+            'address': data.get('address', host_id),
             'direct_host': data.get('direct_host'),
             'direct_port': data.get('direct_port'),
             'status': 'online',
@@ -255,7 +255,7 @@ def handle_register_server(data):
 def handle_webrtc_offer(data):
     data = data or {}
     browser_sid = data.get('browser_sid')
-    print(f'[web_server] webrtc_offer browser_sid={browser_sid} server_id={data.get("server_id")}')
+    print(f'[web_server] webrtc_offer browser_sid={browser_sid} host_id={data.get("host_id")}')
     if not browser_sid:
         return
     with state_lock:
@@ -263,10 +263,10 @@ def handle_webrtc_offer(data):
         if not session:
             print('[web_server] no browser session for offer', browser_sid)
             return
-        server_id = session.get('server_id')
-        server = registered_servers.get(server_id)
+        host_id = session.get('host_id')
+        server = registered_servers.get(host_id)
     if not server or not server.get('sid'):
-        print('[web_server] no registered server for offer', server_id)
+        print('[web_server] no registered host for offer', host_id)
         return
     socketio.emit('webrtc_offer', data, room=server['sid'])
 
@@ -295,8 +295,8 @@ def handle_webrtc_candidate(data):
             if not session:
                 print('[web_server] no browser session for candidate', browser_sid)
                 return
-            server_id = session.get('server_id')
-            server = registered_servers.get(server_id)
+            host_id = session.get('host_id')
+            server = registered_servers.get(host_id)
         if server and server.get('sid'):
             socketio.emit('webrtc_candidate', data, room=server['sid'])
         return
@@ -316,19 +316,19 @@ def handle_session_ready_from_server(data):
             session['connect_result'] = 'ready'
             if session.get('connect_event'):
                 session['connect_event'].set()
-    socketio.emit('session_ready', {'server_id': data.get('server_id')}, room=browser_sid)
+    socketio.emit('session_ready', {'host_id': data.get('host_id')}, room=browser_sid)
 
 
 @socketio.on('session_ended')
 def handle_session_ended_from_server(data):
     data = data or {}
     browser_sid = data.get('browser_sid')
-    server_id = data.get('server_id')
+    host_id = data.get('host_id')
     if not browser_sid:
         return
 
     with state_lock:
-        registered_server = registered_servers.get(server_id)
+        registered_server = registered_servers.get(host_id)
         if not registered_server or registered_server.get('sid') != request.sid:
             return
         session = browser_sessions.pop(browser_sid, None)
@@ -337,7 +337,7 @@ def handle_session_ended_from_server(data):
 
     socketio.emit('session_ended', {
         'browser_sid': browser_sid,
-        'server_id': server_id,
+        'host_id': host_id,
         'reason': data.get('reason', 'server_ended'),
     }, room=browser_sid)
 
@@ -357,7 +357,7 @@ def handle_session_denied_from_server(data):
                 session['connect_event'].set()
     socketio.emit('session_denied', {
         'browser_sid': browser_sid,
-        'server_id': data.get('server_id'),
+        'host_id': data.get('host_id'),
         'reason': data.get('reason'),
     }, room=browser_sid)
 
@@ -368,21 +368,21 @@ def handle_socket_disconnect():
     with state_lock:
         active_socket_ids.discard(browser_sid)
         session = browser_sessions.pop(browser_sid, None)
-        server_id = session.get('server_id') if session else None
-        server = registered_servers.get(server_id) if server_id else None
-        server_id_for_disconnect = next(
-            (server_id for server_id, server_info in registered_servers.items()
+        host_id = session.get('host_id') if session else None
+        server = registered_servers.get(host_id) if host_id else None
+        host_id_for_disconnect = next(
+            (host_id for host_id, server_info in registered_servers.items()
              if server_info.get('sid') == browser_sid),
             None,
         )
-        if server_id_for_disconnect:
-            registered_servers[server_id_for_disconnect]['disconnected_at'] = time.time()
+        if host_id_for_disconnect:
+            registered_servers[host_id_for_disconnect]['disconnected_at'] = time.time()
 
-    if server_id_for_disconnect:
-        _signal_server_sessions(server_id_for_disconnect, 'unavailable')
+    if host_id_for_disconnect:
+        _signal_host_sessions(host_id_for_disconnect, 'unavailable')
 
     if session and server and server.get('sid'):
-        socketio.emit('session_ended', {'browser_sid': browser_sid, 'server_id': server_id}, room=server['sid'])
+        socketio.emit('session_ended', {'browser_sid': browser_sid, 'host_id': host_id}, room=server['sid'])
 
 
 if __name__ == '__main__':
