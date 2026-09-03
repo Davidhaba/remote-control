@@ -5,6 +5,5 @@ __pycache__/
 .mypy_cache/
 .vscode/
 logs/
-RemoteControlServer.spec
 release/
 release/*
