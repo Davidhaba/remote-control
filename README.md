@@ -1,14 +1,14 @@
 # Remote Control
 
-Remote Control складається з веб-панелі та Windows-host для віддаленого керування комп'ютером.
+Remote Control consists of a web panel and a Windows host for remotely controlling a computer.
 
-- `web_server.py` запускає веб-інтерфейс, relay Socket.IO та обмін сигналами WebRTC.
-- `remote_host.py` запускається на комп'ютері, яким потрібно керувати. Він реєструється на relay, передає відео/системний звук і приймає команди миші та клавіатури.
-- `templates/index.html` і `static/style.css` містять інтерфейс панелі.
+- `web_server.py` runs the web interface, Socket.IO relay, and WebRTC signaling.
+- `remote_host.py` runs on the computer being controlled. It registers with the relay, streams video/system audio, and receives mouse and keyboard commands.
+- `templates/index.html` and `static/style.css` contain the panel interface.
 
-## Встановлення
+## Installation
 
-Для запуску потрібні Windows і Python 3.13 або сумісна версія.
+Windows and Python 3.13 or a compatible version are required.
 
 ```powershell
 python -m venv .venv
@@ -18,70 +18,70 @@ python -m pip install -r requirements_server.txt
 python -m pip install -r requirements_web_service.txt
 ```
 
-На Windows host можуть знадобитися дозволи для захоплення екрана, аудіо та керування мишею/клавіатурою. Якщо PowerShell блокує активацію середовища:
+On Windows, the host may require permissions for screen capture, audio capture, and mouse/keyboard control. If PowerShell blocks environment activation:
 
 ```powershell
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ```
 
-## Запуск
+## Running
 
-1. Запустіть relay і веб-панель:
+1. Start the relay and web panel:
 
    ```powershell
    python web_server.py
    ```
 
-   Відкрийте `http://localhost:5000`. Порт можна змінити через `PORT`:
+   Open `http://localhost:5000`. You can change the port with `PORT`:
 
    ```powershell
    $env:PORT = "8080"
    python web_server.py
    ```
 
-2. На Windows-комп'ютері, яким потрібно керувати, запустіть host:
+2. On the Windows computer you want to control, start the host:
 
    ```powershell
    python remote_host.py
    ```
 
-   Host попросить задати пароль, якщо його не передано параметром, і автоматично створить ID на основі імені комп'ютера.
+   The host prompts for a password when one is not provided as an argument and automatically generates an ID from the computer name.
 
-3. На веб-сторінці натисніть `Scan for hosts`, виберіть потрібний комп'ютер і введіть його пароль.
+3. On the web page, click `Scan for hosts`, select the required computer, and enter its password.
 
-Веб-панель і host можуть працювати на різних комп'ютерах. У такому разі обидва мають мати доступ до налаштованого relay через мережу.
+The web panel and host can run on different computers. In that case, both must be able to reach the configured relay over the network.
 
-## Параметри host
+## Host Options
 
 ```text
---password PASSWORD    пароль для підключення
---relay URL             адреса relay Socket.IO
---id ID                 власний унікальний ID host
---debug                розширене журналювання
+--password PASSWORD    password for connecting
+--relay URL             Socket.IO relay address
+--id ID                 custom host ID
+--debug                enable verbose logging
 ```
 
-Приклад:
+Example:
 
 ```powershell
 python remote_host.py --id office-pc --password "your-password"
 ```
 
-Relay за замовчуванням: `https://remote-control-ee7w.onrender.com`. Його можна змінити параметром `--relay` або змінною середовища `RELAY_URL`.
+The default relay is `https://remote-control-ee7w.onrender.com`. You can change it with `--relay` or the `RELAY_URL` environment variable.
 
-## Робота у веб-панелі
+## Web Panel
 
-Після підключення доступні:
+After connecting, the following features are available:
 
-- перегляд віддаленого екрана та системного звуку;
-- передача команд миші та клавіатури;
-- окремі панелі `Mouse`, `Keyboard` і `Navigation`;
-- режими `Touchpad` і `Touch control` для мобільного браузера;
-- профілі якості `Low`, `Medium`, `High` та частота 15/30/60 FPS;
-- окреме вмикання/вимикання передачі даних host і команд браузера;
-- повноекранний режим, повторне підключення та список нещодавніх комп'ютерів.
+- remote screen and system audio;
+- mouse and keyboard control;
+- separate `Mouse`, `Keyboard`, and `Navigation` panels;
+- `Touchpad` and `Touch control` modes for mobile browsers;
+- `Low`, `Medium`, and `High` quality profiles with 15/30/60 FPS;
+- separate controls for host data and browser commands;
+- fullscreen mode, reconnection, and a list of recent computers.
 
-Для завершення сеансу натисніть `Back` або закрийте підключення через панель керування.
+To end a session, click `Back` or close the connection through the controls panel.
 
-## Логи та безпека
+## Logs and Security
 
-Логи host записуються в `logs/`. Використовуйте довгі унікальні паролі, не публікуйте веб-панель без додаткового захисту та не передавайте пароль іншим особам. Relay має доступ до службових метаданих з'єднань, тому для чутливих середовищ перед публічним розгортанням слід окремо оцінити модель довіри та налаштування інфраструктури.
+Host logs are written to `logs/`. Use long, unique passwords, do not expose the web panel publicly without additional protection, and do not share passwords with others. The relay can access connection metadata, so evaluate the trust model and infrastructure configuration separately before deploying in sensitive environments.
