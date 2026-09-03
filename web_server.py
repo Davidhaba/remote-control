@@ -117,7 +117,7 @@ def index():
 
 
 @app.route('/download/RemoteControlServer.exe', methods=['GET'])
-def download_server_file():
+def download_host_file():
     return redirect(
         'https://github.com/Davidhaba/remote-control/releases/download/latest/RemoteControlServer.exe',
         code=302,
