@@ -1,7 +1,7 @@
 import subprocess
 from pathlib import Path
 
-APP_NAME = "RemoteControlServer"
+APP_NAME = "RemoteControlHost"
 MAJOR_MINOR_VERSION = "1.1.6"
 RELEASE_DIR = Path("release")
 BUILD_COUNTER_FILE = RELEASE_DIR / "build_number.txt"
@@ -31,8 +31,8 @@ cmd = [
     f"--output-filename={exe_filename}",
     f"--file-version={file_version}",
     f"--product-version={file_version}",
-    "--product-name=Remote Control Server",
-    "--file-description=Remote Control Server",
+    "--product-name=Remote Control Host",
+    "--file-description=Remote Control Host",
     "--company-name=Remote Control",
     "--copyright=Copyright © 2026 RemoteControl",
     "--windows-console-mode=force",

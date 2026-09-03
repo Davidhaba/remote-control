@@ -116,10 +116,10 @@ def index():
     return render_template('index.html')
 
 
-@app.route('/download/RemoteControlServer.exe', methods=['GET'])
+@app.route('/download/RemoteControlHost.exe', methods=['GET'])
 def download_host_file():
     return redirect(
-        'https://github.com/Davidhaba/remote-control/releases/download/latest/RemoteControlServer.exe',
+        'https://github.com/Davidhaba/remote-control/releases/download/latest/RemoteControlHost.exe',
         code=302,
     )
 
