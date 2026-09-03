@@ -61,20 +61,20 @@
                         </div>
 
                         <div class="controls">
-                            <button class="btn btn-primary" onclick="discoverServers()"><i class="fa fa-refresh"></i>
+                            <button class="btn btn-primary" onclick="discoverHosts()"><i class="fa fa-refresh"></i>
                                 Scan for hosts</button>
                         </div>
 
                         <div class="search">
                             <i class="fa fa-search search-icon"></i>
-                            <input id="serverSearch" placeholder="Search hosts" oninput="filterServers()">
+                            <input id="hostSearch" placeholder="Search hosts" oninput="filterHosts()">
                             <button class="btn btn-ghost clear-search" aria-label="Clear search"
-                                onclick="document.getElementById('serverSearch').value='';filterServers();">&times;</button>
+                                onclick="document.getElementById('hostSearch').value='';filterHosts();">&times;</button>
                         </div>
 
-                        <div class="server-list-wrap">
-                            <div id="serverList" class="server-list"></div>
-                            <div id="serverListMessage" class="list-message-overlay" aria-live="polite"></div>
+                        <div class="host-list-wrap">
+                            <div id="hostList" class="host-list"></div>
+                            <div id="hostListMessage" class="list-message-overlay" aria-live="polite"></div>
                         </div>
                         <p class="info-text subdued">Only machines currently visible to the relay are shown.</p>
                     </div>
@@ -91,19 +91,19 @@
                         </div>
 
                         <div class="controls">
-                            <button class="btn btn-primary" onclick="renderRecentServers()"><i
+                            <button class="btn btn-primary" onclick="renderRecentHosts()"><i
                                     class="fa fa-refresh"></i> Refresh history</button>
                         </div>
 
                         <div class="search">
                             <i class="fa fa-search search-icon"></i>
-                            <input id="recentSearch" placeholder="Search computers" oninput="filterRecentServers()">
+                            <input id="recentSearch" placeholder="Search computers" oninput="filterRecentHosts()">
                             <button class="btn btn-ghost clear-search" aria-label="Clear search"
-                                onclick="document.getElementById('recentSearch').value='';filterRecentServers();">&times;</button>
+                                onclick="document.getElementById('recentSearch').value='';filterRecentHosts();">&times;</button>
                         </div>
 
-                        <div class="server-list-wrap">
-                            <div id="recentList" class="server-list"></div>
+                        <div class="host-list-wrap">
+                            <div id="recentList" class="host-list"></div>
                             <div id="recentListMessage" class="list-message-overlay" aria-live="polite"></div>
                         </div>
                         <p class="info-text subdued">Computers remain here after they go offline.</p>
@@ -167,8 +167,8 @@
             <div class="control-section">
                 <div class="control-title"><i class="fa fa-exchange"></i> Data transmission</div>
                 <div class="setting-options transmission-options" role="group" aria-label="Data transmission">
-                    <button type="button" class="setting-option active" id="serverDataToggle" aria-pressed="true"
-                        onclick="toggleServerDataSending()">Host data: On</button>
+                    <button type="button" class="setting-option active" id="hostDataToggle" aria-pressed="true"
+                        onclick="toggleHostDataSending()">Host data: On</button>
                     <button type="button" class="setting-option active" id="clientDataToggle" aria-pressed="true"
                         onclick="toggleClientDataSending()">Client commands: On</button>
                 </div>
@@ -272,7 +272,7 @@
     <div id="passwordModal" class="modal-backdrop" onclick="cancelPasswordModal(event)">
         <div class="modal-content" onclick="event.stopPropagation();">
             <h2>Enter host password</h2>
-            <div id="modalServerInfo" class="server-info"></div>
+            <div id="modalHostInfo" class="host-info"></div>
             <form id="passwordForm" onsubmit="submitPasswordModal(event)">
                 <label for="passwordInput">Password</label>
                 <input id="passwordInput" type="password" autocomplete="current-password" placeholder="Host password"
@@ -359,8 +359,8 @@
         });
 
         let isConnected = false;
-        let selectedServer = null;
-        let selectedServerName = null;
+        let selectedHost = null;
+        let selectedHostName = null;
         let tabSwitchTimer = null;
         let viewSwitchTimer = null;
         let keyboardTabSwitchTimer = null;
@@ -380,7 +380,7 @@
         const TOUCHPAD_DRAG_THRESHOLD = 4;
         const TOUCHPAD_SENSITIVITY = 1.6;
 
-        const __serverItems = [];
+        const __hostItems = [];
         const __recentItems = [];
 
         let noticeTimer = null;
@@ -460,7 +460,7 @@
         let webrtcConnectionTimer = null;
         let connectAttemptTimer = null;
         let connectAttemptId = 0;
-        let serverDataSendingEnabled = true;
+        let hostDataSendingEnabled = true;
         let clientDataSendingEnabled = true;
         let touchInputMode = 'touchpad';
         let touchGesture = null;
@@ -638,7 +638,7 @@
                 updateHeaderWidth();
                 updateTabIndicator(document.querySelector('.tab-btn.active'));
             });
-            discoverServers();
+            discoverHosts();
             updateHeaderWidth();
             updateTabIndicator(document.querySelector('.tab-btn.active'));
         });
@@ -673,7 +673,7 @@
 
             tabSwitchTimer = setTimeout(() => {
                 targetTab.classList.add('active');
-                if (tab === 'recent') renderRecentServers();
+                if (tab === 'recent') renderRecentHosts();
             }, 120);
         }
 
@@ -686,123 +686,123 @@
             indicator.style.transform = `translate3d(${activeButton.offsetLeft}px, 0, 0)`;
         }
 
-        function discoverServers() {
-            setListMessage('serverList', 'Searching for hosts...', 'loading');
+        function discoverHosts() {
+            setListMessage('hostList', 'Searching for hosts...', 'loading');
 
             fetch('/api/discover-hosts')
                 .then(res => res.json())
                 .then(data => {
-                    const serverList = document.getElementById('serverList');
-                    serverList.innerHTML = '';
-                    clearListMessage('serverList');
-                    __serverItems.length = 0;
+                    const hostList = document.getElementById('hostList');
+                    hostList.innerHTML = '';
+                    clearListMessage('hostList');
+                    __hostItems.length = 0;
                     if (!data.hosts || data.hosts.length === 0) {
-                        setListMessage('serverList', 'No hosts found');
+                        setListMessage('hostList', 'No hosts found');
                         return;
                     }
-                    data.hosts.forEach(server => {
+                    data.hosts.forEach(host => {
                         const item = document.createElement('div');
-                        item.className = 'server-item';
-                        const serverName = server.name || server.hostname || 'Unknown';
-                        const hostId = server.host_id || server.address || 'Unknown';
-                        item.innerHTML = `<div><span>${serverName}</span><span class="muted-text small-font">ID: ${hostId}</span></div>`;
-                        item.onclick = () => showPasswordModal(hostId, item, serverName);
-                        serverList.appendChild(item);
-                        __serverItems.push({ element: item, text: `${serverName} ${hostId} ${server.hostname || ''} ${server.address || ''}`.toLowerCase() });
+                        item.className = 'host-item';
+                        const hostName = host.name || host.hostname || 'Unknown';
+                        const hostId = host.host_id || host.address || 'Unknown';
+                        item.innerHTML = `<div><span>${hostName}</span><span class="muted-text small-font">ID: ${hostId}</span></div>`;
+                        item.onclick = () => showPasswordModal(hostId, item, hostName);
+                        hostList.appendChild(item);
+                        __hostItems.push({ element: item, text: `${hostName} ${hostId} ${host.hostname || ''} ${host.address || ''}`.toLowerCase() });
                     });
-                    if (document.getElementById('serverSearch')?.value?.trim()) {
-                        filterServers();
+                    if (document.getElementById('hostSearch')?.value?.trim()) {
+                        filterHosts();
                     }
                 })
                 .catch(() => {
                     const statusDiv = getStatusElement();
                     statusDiv.className = 'status error';
                     statusDiv.textContent = 'Search failed';
-                    const serverList = document.getElementById('serverList');
-                    if (__serverItems.length === 0) setListMessage('serverList', 'Search failed', 'error');
-                    else clearListMessage('serverList');
+                    const hostList = document.getElementById('hostList');
+                    if (__hostItems.length === 0) setListMessage('hostList', 'Search failed', 'error');
+                    else clearListMessage('hostList');
                 });
         }
 
-        function getRecentServers() {
+        function getRecentHosts() {
             try {
-                return JSON.parse(localStorage.getItem('remoteControl.recentServers') || '[]');
+                return JSON.parse(localStorage.getItem('remoteControl.recentHosts') || '[]');
             } catch (error) {
                 console.warn('Recent computer history is invalid:', error);
                 return [];
             }
         }
 
-        function saveRecentServer(address = null, password = null, label = null) {
+        function saveRecentHost(address = null, password = null, label = null) {
             if (!address || !password) return;
-            const recent = getRecentServers().filter(server => server.address !== address);
+            const recent = getRecentHosts().filter(host => host.address !== address);
             recent.unshift({ address, password, label, lastConnected: Date.now() });
-            localStorage.setItem('remoteControl.recentServers', JSON.stringify(recent.slice(0, 20)));
+            localStorage.setItem('remoteControl.recentHosts', JSON.stringify(recent.slice(0, 20)));
         }
 
-        function renderRecentServers() {
+        function renderRecentHosts() {
             const recentList = document.getElementById('recentList');
             if (!recentList) return;
             recentList.innerHTML = '';
             clearListMessage('recentList');
             __recentItems.length = 0;
-            const recent = getRecentServers();
+            const recent = getRecentHosts();
             if (!recent.length) {
                 setListMessage('recentList', 'No recent computers');
                 return;
             }
-            recent.forEach(server => {
+            recent.forEach(host => {
                 const item = document.createElement('div');
-                item.className = 'server-item';
-                item.innerHTML = `<div><span>${server.label || 'Unknown'}</span><span class="muted-text small-font">ID: ${server.address}</span></div><button type="button" class="recent-delete" title="Remove from history" aria-label="Remove ${server.label || server.address} from history"><i class="fa fa-trash"></i></button>`;
-                item.onclick = () => connectWithStoredPassword(server, item);
-                item.querySelector('.recent-delete').onclick = (event) => deleteRecentServer(server.address, event);
+                item.className = 'host-item';
+                item.innerHTML = `<div><span>${host.label || 'Unknown'}</span><span class="muted-text small-font">ID: ${host.address}</span></div><button type="button" class="recent-delete" title="Remove from history" aria-label="Remove ${host.label || host.address} from history"><i class="fa fa-trash"></i></button>`;
+                item.onclick = () => connectWithStoredPassword(host, item);
+                item.querySelector('.recent-delete').onclick = (event) => deleteRecentHost(host.address, event);
                 recentList.appendChild(item);
-                __recentItems.push({ element: item, text: `${server.label || 'Unknown'} ${server.address}`.toLowerCase() });
+                __recentItems.push({ element: item, text: `${host.label || 'Unknown'} ${host.address}`.toLowerCase() });
             });
             if (document.getElementById('recentSearch')?.value?.trim()) {
-                filterRecentServers();
+                filterRecentHosts();
             }
         }
 
-        function deleteRecentServer(address, event) {
+        function deleteRecentHost(address, event) {
             event?.stopPropagation();
-            const recent = getRecentServers().filter(server => server.address && server.address !== null && server.address !== address);
+            const recent = getRecentHosts().filter(host => host.address && host.address !== null && host.address !== address);
             try {
-                localStorage.setItem('remoteControl.recentServers', JSON.stringify(recent));
+                localStorage.setItem('remoteControl.recentHosts', JSON.stringify(recent));
             } catch { }
-            renderRecentServers();
+            renderRecentHosts();
         }
 
-        function connectWithStoredPassword(server, element) {
-            document.querySelectorAll('.server-item').forEach(el => el.classList.remove('selected'));
+        function connectWithStoredPassword(host, element) {
+            document.querySelectorAll('.host-item').forEach(el => el.classList.remove('selected'));
             element.classList.add('selected');
-            selectedServer = server.address;
-            selectedServerName = server.label || null;
+            selectedHost = host.address;
+            selectedHostName = host.label || null;
             const statusDiv = getStatusElement();
             if (statusDiv) {
                 statusDiv.className = 'status loading';
                 statusDiv.textContent = 'Connecting...';
             }
-            connectToServer(server.address, server.password, selectedServerName);
+            connectToHost(host.address, host.password, selectedHostName);
         }
 
-        function filterServers() {
-            const q = document.getElementById('serverSearch').value.trim().toLowerCase();
-            __serverItems.forEach(it => {
+        function filterHosts() {
+            const q = document.getElementById('hostSearch').value.trim().toLowerCase();
+            __hostItems.forEach(it => {
                 it.element.style.display = (!q || q === '' || it.text.includes(q)) ? '' : 'none';
             });
-            const visibleItems = __serverItems.filter(it => it.element.style.display !== 'none');
-            const serverList = document.getElementById('serverList');
-            if (serverList) {
-                clearListMessage('serverList');
+            const visibleItems = __hostItems.filter(it => it.element.style.display !== 'none');
+            const hostList = document.getElementById('hostList');
+            if (hostList) {
+                clearListMessage('hostList');
                 if (visibleItems.length === 0 && q.length > 0) {
-                    setListMessage('serverList', 'No matches found');
+                    setListMessage('hostList', 'No matches found');
                 }
             }
         }
 
-        function filterRecentServers() {
+        function filterRecentHosts() {
             const q = document.getElementById('recentSearch').value.trim().toLowerCase();
             __recentItems.forEach(it => {
                 it.element.style.display = (!q || q === '' || it.text.includes(q)) ? '' : 'none';
@@ -817,14 +817,14 @@
             }
         }
 
-        function showPasswordModal(targetAddress, element, serverName = null) {
+        function showPasswordModal(targetAddress, element, hostName = null) {
             setPasswordModalPending(false);
-            document.querySelectorAll('.server-item').forEach(el => el.classList.remove('selected'));
+            document.querySelectorAll('.host-item').forEach(el => el.classList.remove('selected'));
             if (element) element.classList.add('selected');
-            selectedServer = targetAddress;
-            selectedServerName = serverName;
-            const modalInfo = document.getElementById('modalServerInfo');
-            modalInfo.textContent = `Connecting to ${serverName || targetAddress}`;
+            selectedHost = targetAddress;
+            selectedHostName = hostName;
+            const modalInfo = document.getElementById('modalHostInfo');
+            modalInfo.textContent = `Connecting to ${hostName || targetAddress}`;
             const passwordError = document.getElementById('passwordError');
             if (passwordError) passwordError.textContent = '';
             document.getElementById('passwordInput').value = '';
@@ -879,7 +879,7 @@
         function cancelPasswordModal() {
             if (document.getElementById('passwordModal')?.classList.contains('is-pending')) return;
             hidePasswordModal();
-            selectedServer = null;
+            selectedHost = null;
         }
 
         function submitPasswordModal(event) {
@@ -891,7 +891,7 @@
                 return;
             }
             setPasswordModalPending(true);
-            connectToServer(selectedServer, password, selectedServerName);
+            connectToHost(selectedHost, password, selectedHostName);
         }
 
         function clearConnectAttemptTimer() {
@@ -920,7 +920,7 @@
         function startConnectAttemptTimer(address, attemptId) {
             clearConnectAttemptTimer();
             connectAttemptTimer = setTimeout(() => {
-                if (attemptId !== connectAttemptId || selectedServer !== address) return;
+                if (attemptId !== connectAttemptId || selectedHost !== address) return;
                 connectAttemptTimer = null;
                 connectAttemptId++;
                 setPasswordModalPending(false);
@@ -935,7 +935,7 @@
             }, CLIENT_CONNECT_TIMEOUT);
         }
 
-        function connectToServer(address, password, serverName = null) {
+        function connectToHost(address, password, hostName = null) {
             const statusDiv = getStatusElement();
             if (!address) {
                 setPasswordModalPending(false);
@@ -964,8 +964,8 @@
                     if (attemptId !== connectAttemptId) return;
                     if (window.RC_VERBOSE) console.log('[browser] connect response', data);
                     if (data.status === 'connected') {
-                        saveRecentServer(address, password, serverName);
-                        renderRecentServers();
+                        saveRecentHost(address, password, hostName);
+                        renderRecentHosts();
                     } else {
                         clearConnectAttemptTimer();
                         setPasswordModalPending(false);
@@ -1030,7 +1030,7 @@
             }
 
             suppressConnectionOverlay = true;
-            selectedServer = retryHostId;
+            selectedHost = retryHostId;
             await closeWebRTCConnection();
             hideConnectionOverlay();
 
@@ -1057,7 +1057,7 @@
                     suppressConnectionOverlay = false;
                     if (statusDiv) {
                         statusDiv.className = 'status loading';
-                        statusDiv.textContent = 'Waiting for server authorization...';
+                        statusDiv.textContent = 'Waiting for host authorization...';
                     }
                 } else {
                     suppressConnectionOverlay = false;
@@ -1141,9 +1141,9 @@
 
         function resetControlPanels() {
             clearTimeout(keyboardTabSwitchTimer);
-            serverDataSendingEnabled = true;
+            hostDataSendingEnabled = true;
             clientDataSendingEnabled = true;
-            updateTransmissionToggle('serverDataToggle', 'Server data', true);
+            updateTransmissionToggle('hostDataToggle', 'Host data', true);
             updateTransmissionToggle('clientDataToggle', 'Client commands', true);
             const bottomPanel = document.getElementById('bottomPanel');
             if (bottomPanel) {
@@ -1218,7 +1218,7 @@
 
         function startWebRTCSession() {
             if (webrtcPeer) throw new Error('WebRTC session already started');
-            if (!selectedServer) throw new Error('No host selected');
+            if (!selectedHost) throw new Error('No host selected');
             const google_ice_servers = [
                 { urls: 'stun:stun.l.google.com:19302' },
                 { urls: 'stun:stun1.l.google.com:19302' }
@@ -1686,7 +1686,7 @@
         socket.on('session_ready', (data) => {
             const statusDiv = getStatusElement();
             try {
-                if (data && data.host_id && selectedServer && data.host_id === selectedServer) {
+                if (data && data.host_id && selectedHost && data.host_id === selectedHost) {
                     clearConnectAttemptTimer();
                     setPasswordModalPending(false);
                     hidePasswordModal();
@@ -1694,7 +1694,7 @@
                     statusDiv.textContent = 'Connecting via WebRTC...';
                     startWebRTCSession();
                 } else {
-                    throw new Error('Server ID mismatch');
+                    throw new Error('Host ID mismatch');
                 }
             } catch (e) {
                 if (statusDiv) {
@@ -1708,8 +1708,8 @@
         socket.on('session_denied', (data) => {
             try {
                 const isThisBrowser = data && data.browser_sid === socket.id;
-                const isThisServer = data && data.host_id && selectedServer && data.host_id === selectedServer;
-                if (isThisBrowser || isThisServer) {
+                const isThisHost = data && data.host_id && selectedHost && data.host_id === selectedHost;
+                if (isThisBrowser || isThisHost) {
                     clearConnectAttemptTimer();
                     showAuthenticationError();
                 }
@@ -1719,7 +1719,7 @@
         });
 
         socket.on('session_ended', async (data) => {
-            if (!data || !selectedServer || data.host_id !== selectedServer) return;
+            if (!data || !selectedHost || data.host_id !== selectedHost) return;
             await closeWebRTCConnection();
             isConnected = false;
             if (data.reason === 'webrtc_failed') {
@@ -1728,7 +1728,7 @@
                 statusDiv.textContent = 'WebRTC connection failed.';
                 showConnectionOverlay('Connection failed', 'The connection could not be established. Retry to try again.');
             } else {
-                showConnectionOverlay('Server connection lost', 'The connection to the server has been lost. Please retry.');
+                showConnectionOverlay('Host connection lost', 'The connection to the host has been lost. Please retry.');
             }
         });
 
@@ -2189,10 +2189,10 @@
             button.textContent = `${label}: ${enabled ? 'On' : 'Off'}`;
         }
 
-        function toggleServerDataSending() {
-            serverDataSendingEnabled = !serverDataSendingEnabled;
-            updateTransmissionToggle('serverDataToggle', 'Server data', serverDataSendingEnabled);
-            sendCommand({ type: 'set_host_data_sending', enabled: serverDataSendingEnabled }, { allowWhenDisabled: true });
+        function toggleHostDataSending() {
+            hostDataSendingEnabled = !hostDataSendingEnabled;
+            updateTransmissionToggle('hostDataToggle', 'Host data', hostDataSendingEnabled);
+            sendCommand({ type: 'set_host_data_sending', enabled: hostDataSendingEnabled }, { allowWhenDisabled: true });
         }
 
         function toggleClientDataSending() {

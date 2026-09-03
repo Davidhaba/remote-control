@@ -893,8 +893,8 @@ def on_request_session(data):
     browser_sid = data.get('browser_sid')
     req_password = data.get('password')
     dbg(f'request_session browser_sid={browser_sid}')
-    if server_password:
-        if not req_password or req_password != server_password:
+    if host_password:
+        if not req_password or req_password != host_password:
             info('auth failed for browser_sid=' + str(browser_sid))
             if browser_sid:
                 relay_socket.emit('session_denied', {
@@ -1153,7 +1153,7 @@ def on_relay_connect():
         })
         info(f'host identity: id={args.host_id}\n                        name={socket.gethostname()}')
     except Exception as exc:
-        error(f're-register server failed after reconnect: {exc}')
+        error(f're-register host failed after reconnect: {exc}')
 
 
 @relay_socket.on('disconnect')
@@ -1609,7 +1609,7 @@ if args.password is None:
             else:
                 entered_password = input('Set a password for remote access: ') or ""
             if entered_password.strip():
-                server_password = entered_password
+                host_password = entered_password
                 break
             print('Password cannot be empty. Please enter a non-empty password.')
     except KeyboardInterrupt:
@@ -1623,7 +1623,7 @@ else:
         error('password cannot be empty. Exiting.')
         sys.exit(1)
     else:
-        server_password = args.password.strip()
+        host_password = args.password.strip()
 
 
 def capture_screen_dxgi():

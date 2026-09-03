@@ -393,7 +393,7 @@ if __name__ == '__main__':
         server = WSGIServer(('0.0.0.0', port), app, handler_class=WebSocketHandler)
         shutdown_requested = threading.Event()
 
-        def _handle_gevent_signal(signum, frame=None):
+        def _handle_gevent_signal(signum, _=None):
             print(f'[web_server] received signal {signum}; shutting down')
             shutdown_requested.set()
             try:
